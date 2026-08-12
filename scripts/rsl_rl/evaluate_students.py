@@ -94,6 +94,20 @@ def main(env_cfg, agent_cfg):  # noqa: C901
 
     parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
     num_goals = float(parkour.num_goals)
+
+    # The EVAL configs switch the mass and COM randomisation events off, so the
+    # trace they produce has nothing for the dynamics probe to predict and its
+    # R^2 is meaningless. Easy to miss, and easy to then misread as "the context
+    # failed to learn the dynamics", so say it up front.
+    ev = env.unwrapped.cfg.events
+    disabled = [n for n in ("randomize_rigid_body_mass", "randomize_rigid_body_com")
+                if getattr(ev, n, None) is None]
+    if disabled:
+        print(
+            f"[WARNING]: {', '.join(disabled)} disabled in this config, so those parameters are\n"
+            "           constant across environments and the dynamics probe cannot be run on this\n"
+            "           trace. Use the training task (no -Eval-/-Play- suffix) for the probe."
+        )
     # The EVAL config carries the full reward set, but the *training* config
     # keeps only reward_collision. The training config is the one to use for the
     # dynamics probe, because EVAL disables the mass and COM randomisation

@@ -25,11 +25,13 @@ LEGS = ["FL", "FR", "RL", "RR"]
 # The robot and the gate panel must not share a palette. An earlier version gave
 # the legs the expert colours, which reads as "the blue expert drives the blue
 # leg". No such mapping exists: every expert outputs all twelve joints, and the
-# router picks a pair of experts for the whole body. The legs get a neutral
-# monochrome ramp -- enough to tell them apart when reading the gait, carrying no
-# meaning beyond identity.
-LEG_COLORS = {"FL": "#f2f4f8", "FR": "#c3c9d4", "RL": "#8e97a6", "RR": "#5e6675"}
-BASE_COLOR = "#ffffff"
+# router picks a pair of experts for the whole body. The robot is drawn in a
+# single flat white so no part of it can be read as carrying a colour code;
+# which foot is which stays legible from geometry, and contact from whether the
+# marker is filled.
+ROBOT_COLOR = "#ffffff"
+LEG_COLORS = {leg: ROBOT_COLOR for leg in LEGS}
+BASE_COLOR = ROBOT_COLOR
 EXPERT_COLORS = ["#4da3ff", "#5fdc78", "#ff9646", "#dc6edc"]
 
 
