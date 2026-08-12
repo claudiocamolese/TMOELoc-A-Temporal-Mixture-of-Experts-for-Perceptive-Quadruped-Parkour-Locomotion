@@ -40,6 +40,57 @@ class ParkourRslRlDepthEncoderCfg(ParkourRslRlBaseCfg):
     hidden_dims: int = 512
     learning_rate: float = 1.e-3
     num_steps_per_env: int = 24 * 5
+    # mask the terrain-class one-hot out of the student input (see MoE cfg)
+    zero_env_class: bool = True
+
+@configclass
+class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
+    """Unified temporal Transformer + Mixture-of-Experts student.
+
+    Replaces the GRU depth backbone and the Conv1D state history encoder with a
+    single multimodal temporal Transformer, and the dense actor with a sparse
+    top-k MoE.
+    """
+
+    depth_shape: tuple[int] = (87, 58)
+    num_steps_per_env: int = 24 * 5
+    learning_rate: float = 1.e-3
+
+    # -- token construction
+    prop_window: int = 5          # 50 Hz proprioceptive samples per token (= 100 ms)
+    depth_latent_dim: int = 32    # unchanged Extreme Parkour CNN output
+    prop_latent_dim: int = 64
+
+    # -- temporal transformer
+    history_len: int = 8          # tokens at 10 Hz -> 0.8 s of context
+    d_model: int = 128
+    n_layers: int = 2
+    n_heads: int = 4
+    d_ff: int = 256
+    dropout: float = 0.0
+    context_dim: int = 128
+
+    # -- mixture of experts
+    num_experts: int = 4
+    top_k: int = 2
+    expert_hidden_dims: list[int] = [256, 128]
+    router_hidden_dim: int = 128
+    use_vel_in_input: bool = True
+    vel_source: str = "true"      # "true" | "predicted"
+    router_noise_std: float = 0.3  # noisy top-k gating, training only
+
+    # -- ablation hooks (no cost when left at the defaults)
+    zero_env_class: bool = True
+
+    # -- loss weights
+    coef_action: float = 1.0
+    coef_yaw: float = 1.0
+    coef_terrain: float = 1.0
+    coef_dyn: float = 1.0
+    coef_vel: float = 1.0
+    coef_balance: float = 0.01
+    coef_smooth: float = 0.01
+
 
 @configclass
 class ParkourRslRlEstimatorCfg(ParkourRslRlBaseCfg):
@@ -73,9 +124,18 @@ class ParkourRslRlDistillationAlgorithmCfg(RslRlPpoAlgorithmCfg):
     class_name: str = "DistillationWithExtractor"
 
 @configclass
+class ParkourRslRlDistillationMoEAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    class_name: str = "DistillationMoE"
+
+@configclass
 class ParkourRslRlOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
     policy: ParkourRslRlPpoActorCriticCfg = MISSING
     estimator: ParkourRslRlEstimatorCfg = MISSING
-    depth_encoder: ParkourRslRlDepthEncoderCfg | None = None
-    algorithm: ParkourRslRlPpoAlgorithmCfg | ParkourRslRlDistillationAlgorithmCfg = MISSING
+    depth_encoder: ParkourRslRlDepthEncoderCfg | ParkourRslRlTemporalMoECfg | None = None
+    algorithm: (
+        ParkourRslRlPpoAlgorithmCfg
+        | ParkourRslRlDistillationAlgorithmCfg
+        | ParkourRslRlDistillationMoEAlgorithmCfg
+    ) = MISSING
+    runner_class_name: str = "OnPolicyRunnerWithExtractor"
 

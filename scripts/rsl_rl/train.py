@@ -28,6 +28,12 @@ parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy 
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
+parser.add_argument(
+    "--teacher_checkpoint",
+    type=str,
+    default=None,
+    help="Explicit path to the phase-1 teacher checkpoint used by the distillation runners.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -75,6 +81,13 @@ import torch
 from datetime import datetime
 
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.modules.on_policy_runner_moe import OnPolicyRunnerMoE
+
+RUNNER_CLASSES = {
+    "OnPolicyRunnerWithExtractor": OnPolicyRunnerWithExtractor,
+    "OnPolicyRunnerMoE": OnPolicyRunnerMoE,
+}
+DISTILLATION_ALGORITHMS = ("DistillationWithExtractor", "DistillationMoE")
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -150,8 +163,14 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
         env = multi_agent_to_single_agent(env)
     
     # save resume path before creating a new log_dir
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    needs_checkpoint = agent_cfg.resume or agent_cfg.algorithm.class_name in DISTILLATION_ALGORITHMS
+    if needs_checkpoint:
+        if args_cli.teacher_checkpoint is not None:
+            resume_path = os.path.abspath(args_cli.teacher_checkpoint)
+            if not os.path.isfile(resume_path):
+                raise FileNotFoundError(f"Teacher checkpoint not found: {resume_path}")
+        else:
+            resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # # wrap for video recording
     if args_cli.video:
@@ -168,11 +187,13 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # wrap around environment for rsl-rl
     env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     # # create runner from rsl-rl
-    runner = OnPolicyRunnerWithExtractor(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class = RUNNER_CLASSES[agent_cfg.runner_class_name]
+    print(f"[INFO]: Using runner: {runner_class.__name__}")
+    runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
+    if needs_checkpoint:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)

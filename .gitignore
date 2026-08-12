@@ -52,3 +52,6 @@ omni/cache/
 *~
 .DS_Store
 Thumbs.db
+
+pretrained/
+wandb/

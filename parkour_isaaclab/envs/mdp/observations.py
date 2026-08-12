@@ -159,9 +159,8 @@ class image_features(ManagerTermBase):
         if env_ids is None:
             env_ids = torch.arange(0, self.num_envs)
         depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)[env_ids]
-        for depth_image, env_id in zip(depth_images, env_ids):
-            processed_image = self._process_depth_image(depth_image)
-            self.depth_buffer[env_id] = torch.stack([processed_image]* 2, dim=0)
+        processed = self._process_depth_image(depth_images)
+        self.depth_buffer[env_ids] = processed.unsqueeze(1).repeat(1, self.buffer_len, 1, 1)
 
     def __call__(
         self,
@@ -173,10 +172,9 @@ class image_features(ManagerTermBase):
         ):
         if env.common_step_counter % 5 == 0:
             depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)
-            for env_id, depth_image in enumerate(depth_images):
-                processed_image = self._process_depth_image(depth_image)
-                self.depth_buffer[env_id] = torch.cat([self.depth_buffer[env_id, 1:], 
-                                                    processed_image.to(self.device).unsqueeze(0)], dim=0)
+            # batched: the per-environment Python loop dominated the step time
+            processed = self._process_depth_image(depth_images).to(self.device)
+            self.depth_buffer = torch.cat([self.depth_buffer[:, 1:], processed.unsqueeze(1)], dim=1)
         if self.debug_vis:
             depth_images_np = self.depth_buffer[:, -2].detach().cpu().numpy()
             depth_images_norm = []
@@ -194,14 +192,15 @@ class image_features(ManagerTermBase):
         return self.depth_buffer[:, -2].to(env.device)
 
     def _process_depth_image(self, depth_image):
+        """Crop, resize and normalise a batch of depth images of shape (N, H, W)."""
         depth_image = self._crop_depth_image(depth_image)
-        depth_image = self.resize_transform(depth_image[None, :]).squeeze()
+        depth_image = self.resize_transform(depth_image)
         depth_image = self._normalize_depth_image(depth_image)
         return depth_image
 
     def _crop_depth_image(self, depth_image):
-        # crop 30 pixels from the left and right and and 20 pixels from bottom and return croped image
-        return depth_image[:-2, 4:-4]
+        # drop the bottom 2 rows and 4 columns on each side (dead pixels)
+        return depth_image[..., :-2, 4:-4]
 
     def _normalize_depth_image(self, depth_image):
         depth_image = depth_image  # make similiar to scandot 

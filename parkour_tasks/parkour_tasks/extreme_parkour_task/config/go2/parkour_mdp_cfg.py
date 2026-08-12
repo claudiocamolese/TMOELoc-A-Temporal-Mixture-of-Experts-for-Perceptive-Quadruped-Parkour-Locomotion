@@ -85,7 +85,9 @@ class StudentObservationsCfg:
             "sensor_cfg":SceneEntityCfg("depth_camera"),
             "resize": (58, 87),
             "buffer_len": 2,
-            "debug_vis":True
+            # cv2.imshow inside the rollout loop breaks headless training; the
+            # EVAL/PLAY configs turn it back on.
+            "debug_vis":False
             },
         )
 

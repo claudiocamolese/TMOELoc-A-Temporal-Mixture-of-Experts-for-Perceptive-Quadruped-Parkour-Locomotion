@@ -16,10 +16,15 @@ from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.utils import store_code_state
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 from .feature_extractors import DefaultEstimator
-from .ppo_with_extractor import PPOWithExtractor 
-from .distillation_with_extractor import DistillationWithExtractor 
-from copy import copy 
-import warnings 
+from .ppo_with_extractor import PPOWithExtractor
+from .distillation_with_extractor import DistillationWithExtractor
+from .distillation_moe import DistillationMoE  # noqa: F401  (resolved via eval() on cfg class_name)
+from copy import copy
+import warnings
+
+# proprioception slice holding the (env_class != flat, env_class == flat) one-hot.
+# It is a terrain-type shortcut, so it is masked out of every student input.
+ENV_CLASS_SLICE = slice(11, 13)
 
 class OnPolicyRunnerWithExtractor(OnPolicyRunner):
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
@@ -35,7 +40,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         if self.alg_cfg["class_name"] == "PPOWithExtractor":
             self.training_type = "rl"
-        elif self.alg_cfg["class_name"] == "DistillationWithExtractor":
+        elif self.alg_cfg["class_name"] in ("DistillationWithExtractor", "DistillationMoE"):
             self.training_type = "distillation"
         else:
             raise ValueError(f"Training type not found for algorithm {self.alg_cfg['class_name']}.")
@@ -134,6 +139,11 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             )
 
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
+        # Mask the terrain-class shortcut out of every student input so that the
+        # student has to infer the terrain type from vision and proprioception.
+        self.zero_env_class = bool(
+            self.depth_encoder_cfg.get("zero_env_class", True) if self.depth_encoder_cfg is not None else False
+        )
         # Logging
         self.log_dir = log_dir
         self.writer = None
@@ -358,15 +368,18 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 if self.env.unwrapped.common_step_counter %5 == 0:
                     obs_prop_depth = obs[:, :self.depth_encoder_cfg['num_prop']].clone()
                     obs_prop_depth[:, 6:8] = 0
+                    if self.zero_env_class:
+                        obs_prop_depth[:, ENV_CLASS_SLICE] = 0.
                     depth_latent_and_yaw = self.alg.depth_encoder(additional_obs["depth_camera"].clone(), obs_prop_depth)  # clone is crucial to avoid in-place operation
                     depth_latent = depth_latent_and_yaw[:, :-2]
                     yaw = 1.5*depth_latent_and_yaw[:, -2:]
                     yaws_buffer.append(obs[:,6:8].detach() - yaw)
                 with torch.no_grad():
+                    # the teacher keeps the untouched privileged observation
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
                     delta_yaw_ok_buffer.append(torch.nonzero(additional_obs["delta_yaw_ok"]).size(0) / additional_obs["delta_yaw_ok"].numel())
                 obs[additional_obs["delta_yaw_ok"], 6:8] = yaw.detach()[additional_obs["delta_yaw_ok"]]
-                actions_student = self.alg.depth_actor(obs, hist_encoding=True, scandots_latent=depth_latent)
+                actions_student = self.alg.depth_actor(self.mask_student_obs(obs), hist_encoding=True, scandots_latent=depth_latent)
                 actions_buffer.append(actions_teacher.detach() - actions_student)
                 
                 if it < num_pretrain_iter:
@@ -431,6 +444,24 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # Save the final model after training
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def mask_student_obs(self, obs):
+        """Zero the terrain-class one-hot everywhere the student can read it.
+
+        The flag appears both in the current proprioception and in every frame of
+        the proprioceptive history consumed by the state history encoder.
+        """
+        if not self.zero_env_class:
+            return obs
+        num_prop = self.depth_encoder_cfg['num_prop']
+        num_hist = self.depth_encoder_cfg['num_hist']
+        masked = obs.clone()
+        masked[:, ENV_CLASS_SLICE] = 0.
+        hist_size = num_hist * num_prop
+        hist = masked[:, -hist_size:].reshape(-1, num_hist, num_prop).clone()
+        hist[:, :, ENV_CLASS_SLICE] = 0.
+        masked[:, -hist_size:] = hist.reshape(obs.shape[0], -1)
+        return masked
 
     def log_vision(self, locs, width=80, pad=35):
         

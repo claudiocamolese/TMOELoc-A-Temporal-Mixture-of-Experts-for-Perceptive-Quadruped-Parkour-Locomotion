@@ -11,11 +11,15 @@ from isaaclab.utils import configclass
 
 @configclass
 class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 24 
-    max_iterations = 50000 
+    num_steps_per_env = 24
+    max_iterations = 15000
     save_interval = 100
-    experiment_name = "unitree_go2_parkour"
+    experiment_name = "unitree_go2_parkour_baseline"
+    run_name = "gru_dense_baseline"
     empirical_normalization = False
+    runner_class_name = "OnPolicyRunnerWithExtractor"
+    logger = "wandb"
+    wandb_project = "parkour-moe-transformer"
     policy = ParkourRslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
