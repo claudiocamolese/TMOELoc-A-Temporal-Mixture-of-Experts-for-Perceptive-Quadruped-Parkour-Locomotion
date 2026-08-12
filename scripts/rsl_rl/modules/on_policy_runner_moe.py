@@ -82,6 +82,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 "vel": [],
                 "balance": [],
                 "smooth": [],
+                "zloss": [],
             }
             delta_yaw_ok_buffer = []
 
@@ -136,6 +137,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 if is_perception_step:
                     buffers["balance"].append(self.alg.depth_actor.load_balancing_loss())
                     buffers["smooth"].append(self.alg.depth_actor.routing_smoothness_loss())
+                    buffers["zloss"].append(self.alg.depth_actor.router_z_loss())
 
                 # ---- environment step ---------------------------------------
                 obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))

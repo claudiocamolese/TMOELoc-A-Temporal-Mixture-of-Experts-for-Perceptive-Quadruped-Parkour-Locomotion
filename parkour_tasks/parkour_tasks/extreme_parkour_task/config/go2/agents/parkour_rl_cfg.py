@@ -83,13 +83,27 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     zero_env_class: bool = True
 
     # -- loss weights
+    #
+    # Calibrated against a 235-iteration probe run. The action loss sits around
+    # 6, so a coefficient only matters if its term reaches a comparable scale.
     coef_action: float = 1.0
     coef_yaw: float = 1.0
-    coef_terrain: float = 1.0
-    coef_dyn: float = 1.0
-    coef_vel: float = 1.0
-    coef_balance: float = 0.01
-    coef_smooth: float = 0.01
+    # The context losses are mean-squared-per-element and landed near 0.05 /
+    # 0.0004 / 0.014, i.e. ~1% of the objective at unit weight: effectively
+    # unsupervised. Scaled up so that shaping c_t is an actual training goal.
+    coef_terrain: float = 5.0
+    coef_dyn: float = 5.0
+    coef_vel: float = 5.0
+    # The balance loss ranges over [2, 4] for K=4/top-2. The probe run pinned it
+    # at 3.6-4.0 (worst case: all mass on a fixed pair) because at 0.01 it was
+    # 0.6% of the objective and could only kick the router between collapsed
+    # configurations.
+    coef_balance: float = 0.15
+    # Disabled: a constant gate is its global optimum, so it rewards exactly the
+    # collapse the balance loss fights. Gate caching at the 10 Hz perception
+    # rate already prevents mid-stride switching. Still logged.
+    coef_smooth: float = 0.0
+    coef_zloss: float = 1.e-3
 
 
 @configclass

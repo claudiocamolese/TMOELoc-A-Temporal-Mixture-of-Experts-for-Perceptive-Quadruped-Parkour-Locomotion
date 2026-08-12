@@ -87,6 +87,7 @@ class DistillationMoE:
             "vel": cfg["coef_vel"],
             "balance": cfg["coef_balance"],
             "smooth": cfg["coef_smooth"],
+            "zloss": cfg["coef_zloss"],
         }
 
     # ----------------------------------------------------------------- update
@@ -114,6 +115,7 @@ class DistillationMoE:
         vel_loss = _mse("vel")
         balance_loss = _scalar("balance")
         smooth_loss = _scalar("smooth")
+        z_loss = _scalar("zloss")
 
         c = self.loss_coef
         loss = (
@@ -124,6 +126,7 @@ class DistillationMoE:
             + c["vel"] * vel_loss
             + c["balance"] * balance_loss
             + c["smooth"] * smooth_loss
+            + c["zloss"] * z_loss
         )
 
         self.depth_actor_optimizer.zero_grad()
@@ -141,6 +144,7 @@ class DistillationMoE:
             "vel_loss": vel_loss.item(),
             "balance_loss": balance_loss.item(),
             "smooth_loss": smooth_loss.item(),
+            "z_loss": z_loss.item(),
             "total_loss": loss.item(),
         }
 

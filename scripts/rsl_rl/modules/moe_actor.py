@@ -97,6 +97,7 @@ class MoEActor(nn.Module):
         self.gates: torch.Tensor | None = None  # sparse, renormalised top-k weights
         self.probs: torch.Tensor | None = None  # dense softmax, for the aux losses
         self.prev_probs: torch.Tensor | None = None
+        self.logits: torch.Tensor | None = None
 
     # ------------------------------------------------------------------ utils
 
@@ -126,6 +127,7 @@ class MoEActor(nn.Module):
         self.prev_probs = self.probs
         self.probs = probs
         self.gates = gates
+        self.logits = logits
 
     def reset(self, dones: torch.Tensor | None = None) -> None:
         """Fall back to uniform mixing for environments that just terminated.
@@ -180,10 +182,29 @@ class MoEActor(nn.Module):
         return self.num_experts * torch.sum(fraction.detach() * mean_prob)
 
     def routing_smoothness_loss(self) -> torch.Tensor:
-        """Penalise abrupt expert switching between consecutive perception steps."""
+        """Penalise abrupt expert switching between consecutive perception steps.
+
+        WARNING: this term has a trivial global optimum -- a constant gate -- so
+        it actively rewards routing collapse. Measured: gate entropy 0.145 came
+        with a smoothness loss of 0.002. Gates are already cached at the 10 Hz
+        perception rate, which makes mid-stride switching structurally
+        impossible, so this is redundant as well. Kept for logging and for the
+        ablation; its coefficient defaults to 0.
+        """
         if self.probs is None or self.prev_probs is None:
             return torch.zeros((), device=next(self.parameters()).device)
         return ((self.probs - self.prev_probs.detach()) ** 2).sum(dim=-1).mean()
+
+    def router_z_loss(self) -> torch.Tensor:
+        """Keep router logits from saturating (ST-MoE, Zoph et al., 2022).
+
+        Peaked gates are what specialisation looks like, but saturated logits
+        make the choice unrecoverable: once an expert stops being selected it
+        stops receiving gradient.
+        """
+        if self.logits is None:
+            return torch.zeros((), device=next(self.parameters()).device)
+        return torch.logsumexp(self.logits, dim=-1).pow(2).mean()
 
     @torch.no_grad()
     def routing_stats(self) -> dict[str, float]:
@@ -193,4 +214,7 @@ class MoEActor(nn.Module):
         entropy = -(self.probs * torch.log(self.probs + 1e-8)).sum(dim=-1).mean()
         stats = {f"expert_{i}_usage": usage[i].item() for i in range(self.num_experts)}
         stats["routing_entropy"] = entropy.item()
+        # effective number of experts actually in use; the headline number for
+        # deciding whether num_experts is well chosen
+        stats["routing_perplexity"] = entropy.exp().item()
         return stats
