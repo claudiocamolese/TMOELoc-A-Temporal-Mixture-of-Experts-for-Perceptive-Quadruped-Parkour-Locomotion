@@ -120,12 +120,18 @@ def main(env_cfg, agent_cfg):
     parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
     terrain_names = np.asarray(parkour.env_per_terrain_name).reshape(-1)
 
+    robot = env.unwrapped.scene["robot"]
+    height_scanner = env.unwrapped.scene.sensors["height_scanner"]
+    body_names = list(robot.data.body_names)
+    env_origins = env.unwrapped.scene.env_origins.cpu().numpy()
+
     obs, extras = env.get_observations()
     obs = obs.to(agent_cfg.device)
     depth = extras["observations"]["depth_camera"].to(agent_cfg.device)
 
     writer, rec = None, []
-    log = {k: [] for k in ["gates", "context", "priv_latent", "base_lin_vel", "goal_idx", "contacts", "dones"]}
+    log = {k: [] for k in ["gates", "context", "priv_latent", "base_lin_vel", "goal_idx", "contacts", "dones",
+                           "body_pos", "base_quat", "scan_hits"]}
 
     for step in range(args_cli.steps):
         is_perception_step = env.unwrapped.common_step_counter % 5 == 0
@@ -141,6 +147,13 @@ def main(env_cfg, agent_cfg):
         log["base_lin_vel"].append(obs[:, policy.priv_explicit_slice][:, :3].cpu().numpy())
         log["goal_idx"].append(parkour.cur_goal_idx.cpu().numpy().copy())
         log["contacts"].append(obs[:, 49:53].cpu().numpy())
+        # Everything an offline third-person view needs. The simulator already
+        # knows where every link is, so no renderer is involved.
+        log["body_pos"].append((robot.data.body_pos_w - env.unwrapped.scene.env_origins[:, None, :])
+                               .cpu().numpy().astype(np.float32))
+        log["base_quat"].append(robot.data.root_quat_w.cpu().numpy().astype(np.float32))
+        log["scan_hits"].append((height_scanner.data.ray_hits_w - env.unwrapped.scene.env_origins[:, None, :])
+                                .cpu().numpy().astype(np.float32))
 
         obs, _, dones, extras = env.step(actions)
         obs = obs.to(agent_cfg.device)
@@ -162,7 +175,13 @@ def main(env_cfg, agent_cfg):
         print(f"[INFO]: wrote {path}  ({len(rec)} frames, {w}x{h})")
 
     arch = os.path.join(out_dir, f"rollout_{tag}.npz")
-    np.savez_compressed(arch, terrain_names=terrain_names, **{k: np.asarray(v) for k, v in log.items()})
+    np.savez_compressed(
+        arch,
+        terrain_names=terrain_names,
+        body_names=np.asarray(body_names),
+        env_origins=env_origins,
+        **{k: np.asarray(v) for k, v in log.items()},
+    )
     print(f"[INFO]: wrote {arch}")
 
     env.close()
