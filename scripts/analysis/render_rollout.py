@@ -11,6 +11,7 @@ height scanner reports the terrain around it. This draws both.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 
 import matplotlib
@@ -38,9 +39,34 @@ def build_skeleton(body_names: list[str]):
     return chains
 
 
+def resolve_rollout(path: str | None) -> str:
+    """Accept a file, a directory anywhere above the rollout, or nothing."""
+    if path and os.path.isfile(path):
+        return path
+    roots = [path] if path else ["logs"]
+    found: list[str] = []
+    for root in roots:
+        if not os.path.exists(root):
+            continue
+        found += glob.glob(os.path.join(root, "**", "rollout_*.npz"), recursive=True)
+    if not found:
+        where = path or "logs/"
+        raise SystemExit(
+            f"no rollout_*.npz under {where}\n"
+            "record one first:\n"
+            "  python scripts/rsl_rl/play_student.py --task <...-Play-v0> "
+            "--checkpoint <model_*.pt> --num_envs 4 --steps 400 --headless"
+        )
+    newest = max(found, key=os.path.getmtime)
+    if len(found) > 1:
+        print(f"{len(found)} rollouts found, using the newest")
+    return newest
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("rollout", help="rollout_*.npz from play_student.py")
+    ap.add_argument("rollout", nargs="?", default=None,
+                    help="rollout_*.npz, or a run directory, or omit for the newest")
     ap.add_argument("--env", type=int, default=0, help="which environment to follow")
     ap.add_argument("--fps", type=int, default=25)
     ap.add_argument("--stride", type=int, default=2, help="use every Nth control step")
@@ -49,6 +75,8 @@ def main():
     ap.add_argument("--azim", type=float, default=-70.0)
     args = ap.parse_args()
 
+    args.rollout = resolve_rollout(args.rollout)
+    print(f"reading {args.rollout}")
     d = np.load(args.rollout, allow_pickle=True)
     if "body_pos" not in d:
         raise SystemExit("This rollout predates the state dump. Re-record with play_student.py.")
