@@ -1,0 +1,54 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Python environments and packaging artifacts
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Training runs, logs and experiment trackers
+logs/
+outputs/
+runs/
+multirun/
+wandb/
+mlruns/
+*.log
+events.out.tfevents.*
+
+# Trained models, checkpoints and exported policies
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.jit
+
+# Isaac Sim / Omniverse generated data
+.kit/
+kit/cache/
+omni/cache/
+
+# Editors and operating-system metadata
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
