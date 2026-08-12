@@ -64,10 +64,15 @@ class DistillationWithExtractor():
         self.min_lr_ratio = depth_encoder_cfg.get("min_lr_ratio", 0.1)
         self.spike_guard = SpikeGuard(factor=depth_encoder_cfg.get("spike_factor", 5.0))
         self.last_grad_norm = 0.
+        # A distillation run inherits the teacher's iteration counter (the
+        # released teacher is model_49999, which is why the released student is
+        # model_99998). Keying the schedule on the absolute counter would pin
+        # the whole run to the minimum learning rate.
+        self.schedule_offset = 0
 
     def set_iteration(self, iteration: int) -> None:
         self.learning_rate = warmup_cosine_lr(
-            iteration, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
+            iteration - self.schedule_offset, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
         )
         for group in self.depth_actor_optimizer.param_groups:
             group["lr"] = self.learning_rate

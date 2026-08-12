@@ -48,6 +48,19 @@ class ParkourRslRlDepthEncoderCfg(ParkourRslRlBaseCfg):
     total_iters: int = 15000
     min_lr_ratio: float = 0.1
     spike_factor: float = 5.0
+    # Clamp the teacher action *target* to the range the environment applies
+    # (ActionsCfg.joint_pos.clip). Two actions that differ only beyond that clip
+    # drive identical torques, so the difference is not a behavioural error and
+    # regressing it is fitting noise.
+    #
+    # This is what killed two runs. When the robot enters a violent state the
+    # observation saturates at the +-100 observation clip; the teacher, a dense
+    # MLP that never saw saturated inputs, then emits actions of magnitude ~700.
+    # Measured at the divergence: |a|teacher 30 -> 415 -> 700 while the context
+    # norm stayed flat at 5.4, so the temporal encoder was never the problem.
+    # Upstream never hits this because its student is warm-started from the
+    # teacher's own actor and therefore never leaves the well-behaved regime.
+    action_target_clip: float = 4.8
 
 @configclass
 class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
@@ -68,6 +81,8 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     total_iters: int = 15000
     min_lr_ratio: float = 0.1
     spike_factor: float = 5.0
+    # see ParkourRslRlDepthEncoderCfg.action_target_clip
+    action_target_clip: float = 4.8
 
     # -- token construction
     prop_window: int = 5          # 50 Hz proprioceptive samples per token (= 100 ms)

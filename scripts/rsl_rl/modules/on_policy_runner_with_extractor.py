@@ -144,6 +144,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.zero_env_class = bool(
             self.depth_encoder_cfg.get("zero_env_class", True) if self.depth_encoder_cfg is not None else False
         )
+        self.action_target_clip = float(
+            self.depth_encoder_cfg.get("action_target_clip", 4.8) if self.depth_encoder_cfg is not None else 4.8
+        )
         # Logging
         self.log_dir = log_dir
         self.writer = None
@@ -358,8 +361,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
-        # keep the LR schedule tied to the budget actually being run
-        self.alg.total_iters = tot_iter
+        # the schedule spans depth_encoder.total_iters, measured from here
+        self.alg.schedule_offset = start_iter
         num_pretrain_iter = 0
         for it in range(start_iter, tot_iter):
             start = time.time()
@@ -367,6 +370,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             actions_buffer = []
             delta_yaw_ok_buffer = []
             yaws_buffer = []
+            diag = {k: torch.zeros((), device=self.device) for k in ("act_s", "act_t", "obs", "angvel", "jvel")}
             for _ in range(self.depth_encoder_cfg['num_steps_per_env']):
                 if self.env.unwrapped.common_step_counter %5 == 0:
                     obs_prop_depth = obs[:, :self.depth_encoder_cfg['num_prop']].clone()
@@ -380,10 +384,20 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 with torch.no_grad():
                     # the teacher keeps the untouched privileged observation
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
+                    # regress the action the environment will actually execute
+                    action_target = actions_teacher.clamp(-self.action_target_clip, self.action_target_clip)
                     delta_yaw_ok_buffer.append(torch.nonzero(additional_obs["delta_yaw_ok"]).size(0) / additional_obs["delta_yaw_ok"].numel())
                 obs[additional_obs["delta_yaw_ok"], 6:8] = yaw.detach()[additional_obs["delta_yaw_ok"]]
                 actions_student = self.alg.depth_actor(self.mask_student_obs(obs), hist_encoding=True, scandots_latent=depth_latent)
-                actions_buffer.append(actions_teacher.detach() - actions_student)
+                actions_buffer.append(action_target - actions_student)
+
+                with torch.no_grad():
+                    diag["act_s"] = torch.maximum(diag["act_s"], actions_student.abs().max())
+                    diag["act_t"] = torch.maximum(diag["act_t"], actions_teacher.abs().max())
+                    diag["obs"] = torch.maximum(diag["obs"], obs.abs().max())
+                    # obs layout: [0:3] base angular velocity * 0.25, [25:37] joint velocity * 0.05
+                    diag["angvel"] = torch.maximum(diag["angvel"], obs[:, 0:3].abs().max())
+                    diag["jvel"] = torch.maximum(diag["jvel"], obs[:, 25:37].abs().max())
                 
                 if it < num_pretrain_iter:
                     # Step the environment
@@ -419,6 +433,15 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             actions_buffer = torch.cat(actions_buffer, dim=0)
             yaws_buffer = torch.cat(yaws_buffer, dim=0)
             loss_dict = self.alg.update_depth_actor(actions_buffer, yaws_buffer)
+            loss_dict.update(
+                {
+                    "absmax_action_student": diag["act_s"].item(),
+                    "absmax_action_teacher": diag["act_t"].item(),
+                    "absmax_obs": diag["obs"].item(),
+                    "absmax_base_angvel": diag["angvel"].item(),
+                    "absmax_joint_vel": diag["jvel"].item(),
+                }
+            )
 
             stop = time.time()
             learn_time = stop - start
@@ -610,8 +633,15 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             if self.alg.rnd:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
         # -- load current learning iteration
-        if resumed_training:
+        # Only a *student* checkpoint continues the counter. Loading a teacher to
+        # start distillation would otherwise begin at its iteration (49999 for
+        # the released teacher), which both mangles the LR schedule and makes
+        # the two arms of the comparison incomparable by checkpoint name.
+        is_student_checkpoint = "depth_actor_state_dict" in loaded_dict
+        if resumed_training and (self.depth_encoder_cfg is None or is_student_checkpoint):
             self.current_learning_iteration = loaded_dict["iter"]
+        else:
+            self.current_learning_iteration = 0
         return loaded_dict["infos"]
 
     def get_estimator_inference_policy(self, device=None):

@@ -25,6 +25,14 @@ class UnitreeGo2ParkourStudentMoEPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
     run_name = "moe_transformer"
     empirical_normalization = False
     runner_class_name = "OnPolicyRunnerMoE"
+    # The action term records the *raw* action in its history buffer before
+    # clamping it (parkour_actions/joint_actions.py:42), and that history is fed
+    # straight back as proprioception[37:49]. An unbounded student action
+    # therefore re-enters its own observation, saturates the +-100 observation
+    # clip and drives a runaway feedback loop -- measured: |obs| tracked
+    # |action_student| exactly, at 41.1, 33.7, 62.0 on consecutive iterations.
+    # Clipping at the wrapper makes the recorded action the executed one.
+    clip_actions = 4.8
     logger = "wandb"
     wandb_project = "parkour-moe-transformer"
 

@@ -86,6 +86,9 @@ class DistillationMoE:
         self.min_lr_ratio = cfg["min_lr_ratio"]
         self.spike_guard = SpikeGuard(factor=cfg["spike_factor"])
         self.last_grad_norm = 0.0
+        # distillation inherits the teacher's iteration counter, so the schedule
+        # is keyed on iterations since this run started
+        self.schedule_offset = 0
 
         self.loss_coef = {
             "action": cfg["coef_action"],
@@ -103,7 +106,7 @@ class DistillationMoE:
     def set_iteration(self, iteration: int) -> None:
         """Apply the warmup/cosine learning-rate schedule for this iteration."""
         self.learning_rate = warmup_cosine_lr(
-            iteration, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
+            iteration - self.schedule_offset, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
         )
         for group in self.depth_actor_optimizer.param_groups:
             group["lr"] = self.learning_rate

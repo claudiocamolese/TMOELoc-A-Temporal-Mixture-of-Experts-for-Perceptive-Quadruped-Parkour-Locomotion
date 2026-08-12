@@ -42,23 +42,40 @@ class SpikeGuard:
     whole run.
     """
 
-    def __init__(self, window: int = 100, factor: float = 5.0, min_history: int = 20):
+    def __init__(
+        self,
+        window: int = 100,
+        factor: float = 5.0,
+        min_history: int = 20,
+        max_consecutive: int = 5,
+    ):
         self.history: deque[float] = deque(maxlen=window)
         self.factor = factor
         self.min_history = min_history
+        self.max_consecutive = max_consecutive
         self.num_skipped = 0
+        self.consecutive = 0
 
     def should_skip(self, loss: float) -> bool:
         if not math.isfinite(loss):
             self.num_skipped += 1
+            self.consecutive += 1
             return True
+
+        # The loss always enters the history, even when the step is skipped.
+        # An earlier version only recorded accepted losses, so once the loss
+        # level shifted upwards the median stayed pinned at its pre-spike value
+        # and every subsequent step was skipped: training froze permanently
+        # (observed from iteration 900 onwards, 50 skips in 50 iterations).
+        self.history.append(loss)
         if len(self.history) < self.min_history:
-            self.history.append(loss)
             return False
+
         ordered = sorted(self.history)
         median = ordered[len(ordered) // 2]
-        if loss > self.factor * median:
+        if loss > self.factor * median and self.consecutive < self.max_consecutive:
             self.num_skipped += 1
+            self.consecutive += 1
             return True
-        self.history.append(loss)
+        self.consecutive = 0
         return False

@@ -20,6 +20,9 @@ class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
     runner_class_name = "OnPolicyRunnerWithExtractor"
     logger = "wandb"
     wandb_project = "parkour-moe-transformer"
+    # see rsl_student_moe_cfg: the action history buffer records raw actions, so
+    # an unbounded student action feeds back into its own observation
+    clip_actions = 4.8
     policy = ParkourRslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],

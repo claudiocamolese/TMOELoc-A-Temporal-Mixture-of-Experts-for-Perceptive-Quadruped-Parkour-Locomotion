@@ -33,6 +33,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
         #                original student actor reads, keeping the comparison exact.
         # "predicted" -> the actor consumes the context encoder's own estimate.
         self.vel_source = self.depth_encoder_cfg.get("vel_source", "true")
+        self.action_target_clip = float(self.depth_encoder_cfg.get("action_target_clip", 4.8))
         # the base runner binds `learn` as an instance attribute, so override it here
         self.learn = self.learn_vision_moe
 
@@ -67,8 +68,15 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
-        # keep the LR schedule tied to the budget actually being run
-        self.alg.total_iters = tot_iter
+        # The schedule spans depth_encoder.total_iters measured from here, not
+        # the length of this invocation, so that a short resumed run reproduces
+        # the learning rate the original run had at the same iteration.
+        self.alg.schedule_offset = start_iter
+        if self.alg.total_iters != tot_iter:
+            print(
+                f"[INFO]: LR schedule spans {self.alg.total_iters} iterations; "
+                f"this run covers {start_iter}..{tot_iter}"
+            )
 
         context = None
         vel_pred = None
@@ -88,6 +96,8 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 "zloss": [],
             }
             delta_yaw_ok_buffer = []
+            # divergence diagnostics, accumulated on device to avoid per-step syncs
+            diag = {k: torch.zeros((), device=self.device) for k in ("act_s", "act_t", "ctx", "obs")}
 
             for _ in range(self.depth_encoder_cfg["num_steps_per_env"]):
                 is_perception_step = self.env.unwrapped.common_step_counter % 5 == 0
@@ -118,6 +128,11 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 # ---- teacher action on the untouched privileged observation --
                 with torch.no_grad():
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
+                    # Regress the action the environment will actually execute.
+                    # Beyond this clip the teacher's output is unbounded garbage
+                    # produced from saturated observations, and identical in
+                    # effect to the clipped value.
+                    action_target = actions_teacher.clamp(-self.action_target_clip, self.action_target_clip)
                     delta_yaw_ok_buffer.append(
                         torch.nonzero(delta_yaw_ok).size(0) / delta_yaw_ok.numel()
                     )
@@ -135,7 +150,13 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 actions_student = self.alg.depth_actor(
                     prop_actor, context, vel=vel_input, update_routing=is_perception_step
                 )
-                buffers["action"].append(actions_teacher.detach() - actions_student)
+                buffers["action"].append(action_target - actions_student)
+
+                with torch.no_grad():
+                    diag["act_s"] = torch.maximum(diag["act_s"], actions_student.abs().max())
+                    diag["act_t"] = torch.maximum(diag["act_t"], actions_teacher.abs().max())
+                    diag["ctx"] = torch.maximum(diag["ctx"], context.abs().max())
+                    diag["obs"] = torch.maximum(diag["obs"], obs.abs().max())
 
                 if is_perception_step:
                     buffers["balance"].append(self.alg.depth_actor.load_balancing_loss())
@@ -172,6 +193,14 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             routing_stats = self.alg.depth_actor.routing_stats()
             loss_dict = self.alg.update_depth_actor(buffers)
             loss_dict.update(routing_stats)
+            loss_dict.update(
+                {
+                    "absmax_action_student": diag["act_s"].item(),
+                    "absmax_action_teacher": diag["act_t"].item(),
+                    "absmax_context": diag["ctx"].item(),
+                    "absmax_obs": diag["obs"].item(),
+                }
+            )
 
             stop = time.time()
             learn_time = stop - start
