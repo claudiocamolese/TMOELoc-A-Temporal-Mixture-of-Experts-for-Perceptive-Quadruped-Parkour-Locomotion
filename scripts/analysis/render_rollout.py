@@ -21,7 +21,15 @@ import numpy as np  # noqa: E402
 from matplotlib.animation import FFMpegWriter  # noqa: E402
 
 LEGS = ["FL", "FR", "RL", "RR"]
-LEG_COLORS = {"FL": "#4da3ff", "FR": "#5fdc78", "RL": "#ff9646", "RR": "#dc6edc"}
+
+# The robot and the gate panel must not share a palette. An earlier version gave
+# the legs the expert colours, which reads as "the blue expert drives the blue
+# leg". No such mapping exists: every expert outputs all twelve joints, and the
+# router picks a pair of experts for the whole body. The legs get a neutral
+# monochrome ramp -- enough to tell them apart when reading the gait, carrying no
+# meaning beyond identity.
+LEG_COLORS = {"FL": "#f2f4f8", "FR": "#c3c9d4", "RL": "#8e97a6", "RR": "#5e6675"}
+BASE_COLOR = "#ffffff"
 EXPERT_COLORS = ["#4da3ff", "#5fdc78", "#ff9646", "#dc6edc"]
 
 
@@ -132,7 +140,7 @@ def main():
                 ax.scatter(*p[-1], s=110 if touching else 40,
                            c=LEG_COLORS[leg] if touching else "none",
                            edgecolors=LEG_COLORS[leg], linewidths=1.8, zorder=6)
-            ax.scatter(*base, s=150, c="#f5f5f5", marker="s", zorder=7)
+            ax.scatter(*base, s=150, c=BASE_COLOR, marker="s", zorder=7)
 
             r = 0.52
             ax.set_xlim(base[0] - r, base[0] + r)
@@ -153,6 +161,9 @@ def main():
                 axg.set_xlim(0, 1)
                 axg.invert_yaxis()
                 axg.set_title("expert gates", color="#cfcfcf", fontsize=9)
+                # spelled out, because the obvious wrong reading is that each
+                # expert drives one leg
+                axg.set_xlabel("whole-body mix\n(not per-leg)", color="#6f7684", fontsize=7.5)
             axg.tick_params(colors="#8a8a8a", labelsize=8)
             for s in axg.spines.values():
                 s.set_color("#2a2f3a")
