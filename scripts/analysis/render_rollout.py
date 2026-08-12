@@ -30,6 +30,9 @@ LEGS = ["FL", "FR", "RL", "RR"]
 # which foot is which stays legible from geometry, and contact from whether the
 # marker is filled.
 ROBOT_COLOR = "#ffffff"
+# terrain colour scale, metres relative to the robot's base; fixed so that the
+# same height always maps to the same colour across frames and across videos
+Z_LO, Z_HI = -0.55, 0.20
 LEG_COLORS = {leg: ROBOT_COLOR for leg in LEGS}
 BASE_COLOR = ROBOT_COLOR
 EXPERT_COLORS = ["#4da3ff", "#5fdc78", "#ff9646", "#dc6edc"]
@@ -110,6 +113,17 @@ def main():
     ax = fig.add_subplot(gs[0], projection="3d", facecolor="#111318")
     axg = fig.add_subplot(gs[1], facecolor="#15181f")
 
+    # one colourbar for the whole animation, so the scale is stated rather than
+    # left for the viewer to guess
+    sm = matplotlib.cm.ScalarMappable(
+        norm=matplotlib.colors.Normalize(vmin=Z_LO, vmax=Z_HI), cmap="viridis"
+    )
+    cax = fig.add_axes([0.055, 0.10, 0.012, 0.30])
+    cb = fig.colorbar(sm, cax=cax)
+    cb.set_label("terrain height rel. to base (m)", color="#9aa1ad", fontsize=7.5)
+    cb.ax.tick_params(colors="#9aa1ad", labelsize=7)
+    cb.outline.set_edgecolor("#2a2f3a")
+
     writer = FFMpegWriter(fps=args.fps, bitrate=2400)
     print(f"env {e} on {terrain}: {len(list(steps))} frames -> {out}")
 
@@ -124,7 +138,13 @@ def main():
             finite = np.isfinite(pts).all(1)
             pts = pts[finite]
             if len(pts):
-                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=pts[:, 2], cmap="viridis",
+                # Colour by height *relative to the base*, on a fixed scale.
+                # Passing absolute z with no vmin/vmax lets matplotlib rescale
+                # per frame: on flat ground the only variation is the terrain's
+                # 2 cm roughness, which then gets stretched across the whole
+                # colormap and reads as structure that is not there.
+                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=pts[:, 2] - base[2],
+                           cmap="viridis", vmin=Z_LO, vmax=Z_HI,
                            s=26, alpha=0.9, linewidths=0, depthshade=False)
 
             # where the base has been, so motion is visible in a still frame
