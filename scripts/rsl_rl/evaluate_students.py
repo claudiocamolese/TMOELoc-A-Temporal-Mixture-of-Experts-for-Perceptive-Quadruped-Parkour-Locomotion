@@ -31,6 +31,8 @@ parser.add_argument("--force_expert", type=int, default=None, help="Pin routing 
 parser.add_argument("--vel_source", type=str, default=None, choices=["true", "predicted"])
 parser.add_argument("--out_dir", type=str, default=None)
 parser.add_argument("--tag", type=str, default=None, help="Name for the output files.")
+parser.add_argument("--policy", type=str, default="student", choices=["student", "teacher"],
+                    help="Evaluate the trained student, or the phase-1 teacher as the distillation ceiling.")
 parser.add_argument("--context_every", type=int, default=10, help="Store the context every N steps.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -56,7 +58,7 @@ from scripts.rsl_rl.modules.on_policy_runner_moe import OnPolicyRunnerMoE  # noq
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import (  # noqa: E402
     OnPolicyRunnerWithExtractor,
 )
-from scripts.rsl_rl.modules.student_inference import StudentPolicy  # noqa: E402
+from scripts.rsl_rl.modules.student_inference import StudentPolicy, TeacherPolicy  # noqa: E402
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper  # noqa: E402
 
 RUNNER_CLASSES = {
@@ -85,7 +87,8 @@ def main(env_cfg, agent_cfg):  # noqa: C901
     )
     print(f"[INFO]: Loading checkpoint: {args_cli.checkpoint}")
     runner.load(args_cli.checkpoint, load_optimizer=False)
-    policy = StudentPolicy(runner, cfg_dict, agent_cfg.device, vel_source=args_cli.vel_source)
+    policy_class = TeacherPolicy if args_cli.policy == "teacher" else StudentPolicy
+    policy = policy_class(runner, cfg_dict, agent_cfg.device, vel_source=args_cli.vel_source)
     policy.force_expert(args_cli.force_expert)
     print(f"[INFO]: variant={policy.variant} vel_source={policy.vel_source} forced_expert={args_cli.force_expert}")
 

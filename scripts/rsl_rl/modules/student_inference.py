@@ -18,6 +18,57 @@ YAW_SLICE = slice(6, 8)
 ENV_CLASS_SLICE = slice(11, 13)
 
 
+class TeacherPolicy:
+    """The phase-1 teacher, exposed through the same interface as a student.
+
+    This is the ceiling for distillation: no student can regress its way past
+    the policy it is imitating. Evaluating it on the *same* environment as the
+    students is what makes their MXD interpretable.
+
+    Defaults match the teacher exactly as the distillation runner queries it --
+    ``hist_encoding=True`` and the true privileged velocity straight from the
+    observation -- so the number really is the target the students chase.
+    """
+
+    variant = "teacher"
+
+    def __init__(self, runner, agent_cfg: dict, device, use_estimator: bool = False, **_):
+        self.device = device
+        self.runner = runner
+        self.alg = runner.alg
+        self.policy = runner.alg.policy
+        self.estimator = getattr(runner.alg, "estimator", None)
+        self.use_estimator = use_estimator
+        est = agent_cfg["estimator"]
+        self.num_prop = est["num_prop"]
+        self.num_scan = est["num_scan"]
+        self.num_priv_explicit = est["num_priv_explicit"]
+        self.priv_explicit_slice = slice(
+            self.num_prop + self.num_scan, self.num_prop + self.num_scan + self.num_priv_explicit
+        )
+        self.vel_source = "true"
+        self.forced_expert = None
+        self.last_gates = None
+        self.last_context = None
+        self.policy.eval()
+
+    def force_expert(self, index):
+        if index is not None:
+            raise ValueError("--force_expert does not apply to the teacher.")
+
+    def reset(self, dones=None):
+        pass
+
+    @torch.no_grad()
+    def act(self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool) -> torch.Tensor:
+        if self.use_estimator and self.estimator is not None:
+            obs[:, self.priv_explicit_slice] = self.estimator.inference(obs[:, : self.num_prop])
+        actions = self.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
+        # the teacher has no context; keep the field shaped for the trace writer
+        self.last_context = obs[:, : self.num_prop].clone()
+        return actions
+
+
 class StudentPolicy:
     """Wraps a trained student so callers do not care which variant it is."""
 
