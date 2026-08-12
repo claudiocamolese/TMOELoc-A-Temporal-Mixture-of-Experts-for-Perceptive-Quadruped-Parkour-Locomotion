@@ -90,8 +90,17 @@ def main(env_cfg, agent_cfg):  # noqa: C901
     print(f"[INFO]: variant={policy.variant} vel_source={policy.vel_source} forced_expert={args_cli.force_expert}")
 
     parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
-    feet_at_edge = env.unwrapped.reward_manager.get_term_cfg("reward_feet_edge").func
     num_goals = float(parkour.num_goals)
+    # The EVAL config carries the full reward set, but the *training* config
+    # keeps only reward_collision. The training config is the one to use for the
+    # dynamics probe, because EVAL disables the mass and COM randomisation
+    # events and leaves nothing to predict, so MEV is reported only when the
+    # edge term exists.
+    try:
+        feet_at_edge = env.unwrapped.reward_manager.get_term_cfg("reward_feet_edge").func
+    except (ValueError, KeyError):
+        feet_at_edge = None
+        print("[INFO]: no reward_feet_edge term in this config; MEV will not be reported")
 
     obs, extras = env.get_observations()
     obs = obs.to(agent_cfg.device)
@@ -126,7 +135,11 @@ def main(env_cfg, agent_cfg):  # noqa: C901
         depth = extras["observations"]["depth_camera"].to(agent_cfg.device)
         policy.reset(dones)
 
-        edge = feet_at_edge.feet_at_edge.sum(dim=1).float().cpu().numpy()
+        edge = (
+            feet_at_edge.feet_at_edge.sum(dim=1).float().cpu().numpy()
+            if feet_at_edge is not None
+            else np.full(env.num_envs, np.nan)
+        )
         done_np = dones.cpu().numpy().astype(bool)
         goal_np = goal_before.cpu().numpy()
 

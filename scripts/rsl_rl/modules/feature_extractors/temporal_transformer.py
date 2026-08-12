@@ -107,7 +107,13 @@ class TemporalContextEncoder(nn.Module):
 
         # terrain head matches the teacher scan encoder, whose last layer is Tanh
         self.terrain_head = _head(depth_cfg["num_scan_latent"], tanh=True)
-        self.dyn_head = _head(depth_cfg["num_priv_latent_out"], tanh=False)
+        # The dynamics head regresses the standardised physical parameters, not
+        # the teacher's privileged latent. Measured on the released teacher:
+        # its priv_encoder maps mass (std 1.13 across environments) and friction
+        # (std 0.41) onto a *constant* 20-d vector -- across-environment std
+        # 0.00000 on every one of the 20 dimensions. Regressing that target
+        # teaches the context nothing; the head just learns a constant.
+        self.dyn_head = _head(depth_cfg["num_dyn_targets"], tanh=False)
         self.vel_head = _head(depth_cfg["num_priv_explicit"], tanh=False)
         self.yaw_head = _head(2, tanh=True)
 

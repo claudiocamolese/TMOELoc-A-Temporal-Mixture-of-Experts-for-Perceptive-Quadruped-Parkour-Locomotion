@@ -33,6 +33,43 @@ def warmup_cosine_lr(
     return peak_lr * (min_ratio + (1.0 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress)))
 
 
+class RunningStandardiser:
+    """Streaming mean/std used to put a regression target on a common scale.
+
+    The dynamics targets are physical quantities in wildly different units
+    (mass in kg, COM offsets in centimetres, friction dimensionless), so an
+    unstandardised MSE would be dominated by whichever has the largest range.
+    """
+
+    # eps has to sit well below the variance of the smallest target. The COM
+    # offsets are drawn from +-2 cm, i.e. a variance around 1.4e-4, so an eps of
+    # 1e-4 would silently shrink them to 0.77 sigma and under-weight them.
+    def __init__(self, num_features: int, momentum: float = 0.01, eps: float = 1e-8):
+        self.mean = None
+        self.var = None
+        self.momentum = momentum
+        self.eps = eps
+        self.num_features = num_features
+
+    def __call__(self, x, update: bool = True):
+        import torch
+
+        if self.mean is None:
+            self.mean = x.mean(0).detach()
+            self.var = x.var(0, unbiased=False).detach()
+        elif update:
+            m = self.momentum
+            self.mean = (1 - m) * self.mean + m * x.mean(0).detach()
+            self.var = (1 - m) * self.var + m * x.var(0, unbiased=False).detach()
+        return (x - self.mean) / torch.sqrt(self.var + self.eps)
+
+    def state_dict(self):
+        return {"mean": self.mean, "var": self.var}
+
+    def load_state_dict(self, sd):
+        self.mean, self.var = sd.get("mean"), sd.get("var")
+
+
 class SpikeGuard:
     """Drop optimiser steps whose loss dwarfs the recent history.
 

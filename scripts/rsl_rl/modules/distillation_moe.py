@@ -20,7 +20,7 @@ import torch.optim as optim
 from .actor_critic_with_encoder import ActorCriticRMA
 from .feature_extractors.temporal_transformer import TemporalContextEncoder
 from .moe_actor import MoEActor
-from .optim_utils import SpikeGuard, warmup_cosine_lr
+from .optim_utils import RunningStandardiser, SpikeGuard, warmup_cosine_lr
 
 
 class DistillationMoE:
@@ -58,6 +58,12 @@ class DistillationMoE:
         cfg = dict(depth_encoder_cfg)
         cfg["num_scan_latent"] = policy_cfg["scan_encoder_dims"][-1]
         cfg["num_priv_latent_out"] = policy_cfg["priv_encoder_dims"][-1]
+        self.dyn_target = cfg.get("dyn_target", "raw_params")
+        self.dyn_dims = list(cfg.get("dyn_dims", [0, 1, 2, 3, 4]))
+        cfg["num_dyn_targets"] = (
+            len(self.dyn_dims) if self.dyn_target == "raw_params" else cfg["num_priv_latent_out"]
+        )
+        self.dyn_normaliser = RunningStandardiser(cfg["num_dyn_targets"])
         self.depth_encoder = TemporalContextEncoder(cfg).to(device)
         self.depth_actor = MoEActor(
             num_prop=cfg["num_prop"],

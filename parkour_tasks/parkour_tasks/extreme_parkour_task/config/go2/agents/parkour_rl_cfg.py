@@ -107,6 +107,22 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     vel_source: str = "true"      # "true" | "predicted"
     router_noise_std: float = 0.3  # noisy top-k gating, training only
 
+    # -- dynamics supervision
+    # "raw_params"     regress the standardised physical parameters directly
+    # "teacher_latent" regress the teacher's priv_encoder output (upstream-style)
+    #
+    # The teacher latent is a degenerate target on this checkpoint: its
+    # priv_encoder maps mass (std 1.13 across environments) and friction
+    # (std 0.41) onto a constant 20-d vector, across-environment std 0.00000 on
+    # all 20 dimensions. A run reached dyn_loss 1e-4 against it while friction
+    # remained linearly undecodable from the context (probe R^2 -0.18 against a
+    # shuffled-context control of -0.01): the head had simply learned a constant.
+    dyn_target: str = "raw_params"
+    # indices into the 29-d privileged latent: mass, com x/y/z, friction.
+    # The remaining 24 are joint stiffness and damping ratios, identically zero
+    # because the actuator-gain randomisation event is disabled.
+    dyn_dims: list[int] = [0, 1, 2, 3, 4]
+
     # -- ablation hooks (no cost when left at the defaults)
     zero_env_class: bool = True
 

@@ -53,6 +53,11 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
         num_scan = self.alg.num_scan
         num_priv_explicit = self.alg.priv_states_dim
         priv_explicit_slice = slice(num_prop + num_scan, num_prop + num_scan + num_priv_explicit)
+        num_priv_latent = self.depth_encoder_cfg["num_priv_latent"]
+        priv_latent_slice = slice(
+            num_prop + num_scan + num_priv_explicit,
+            num_prop + num_scan + num_priv_explicit + num_priv_latent,
+        )
 
         self.alg.depth_encoder.train()
         self.alg.depth_actor.train()
@@ -115,12 +120,18 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
                     with torch.no_grad():
                         z_scan_teacher = self.alg.policy.actor.infer_scandots_latent(obs)
-                        z_priv_teacher = self.alg.policy.actor.infer_priv_latent(obs)
                         vel_target = obs[:, priv_explicit_slice].detach()
+                        if self.alg.dyn_target == "raw_params":
+                            # standardised physical parameters; the teacher's own
+                            # privileged latent is constant across environments
+                            raw = obs[:, priv_latent_slice][:, self.alg.dyn_dims].detach()
+                            dyn_target = self.alg.dyn_normaliser(raw)
+                        else:
+                            dyn_target = self.alg.policy.actor.infer_priv_latent(obs)
 
                     buffers["yaw"].append(obs[:, YAW_SLICE].detach() - yaw_pred)
                     buffers["terrain"].append(out["terrain"] - z_scan_teacher)
-                    buffers["dyn"].append(out["dyn"] - z_priv_teacher)
+                    buffers["dyn"].append(out["dyn"] - dyn_target)
                     buffers["vel"].append(out["vel"] - vel_target)
 
                 self.alg.depth_encoder.push_proprioception(prop_ctx)
