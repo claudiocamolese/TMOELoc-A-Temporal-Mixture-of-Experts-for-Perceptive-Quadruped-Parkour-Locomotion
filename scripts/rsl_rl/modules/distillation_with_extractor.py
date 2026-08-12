@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 from .feature_extractors import DepthOnlyFCBackbone58x87, RecurrentDepthBackbone
 from .actor_critic_with_encoder import ActorCriticRMA
-from copy import deepcopy  
+from .optim_utils import SpikeGuard, warmup_cosine_lr
+from copy import deepcopy
 
 class DistillationWithExtractor():
     policy: ActorCriticRMA
@@ -55,19 +56,44 @@ class DistillationWithExtractor():
         self.depth_actor = depth_actor
         self.depth_actor_optimizer = optim.Adam([*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_cfg["learning_rate"])
 
+        # Same schedule and spike guard as the MoE student, so that the two arms
+        # of the comparison differ only in architecture and not in optimiser.
+        self.peak_lr = self.learning_rate
+        self.warmup_iters = depth_encoder_cfg.get("warmup_iters", 500)
+        self.total_iters = depth_encoder_cfg.get("total_iters", 15000)
+        self.min_lr_ratio = depth_encoder_cfg.get("min_lr_ratio", 0.1)
+        self.spike_guard = SpikeGuard(factor=depth_encoder_cfg.get("spike_factor", 5.0))
+        self.last_grad_norm = 0.
+
+    def set_iteration(self, iteration: int) -> None:
+        self.learning_rate = warmup_cosine_lr(
+            iteration, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
+        )
+        for group in self.depth_actor_optimizer.param_groups:
+            group["lr"] = self.learning_rate
+
     def update_depth_actor(self, actions_buffer, yaws_buffer):
         depth_actor_loss = (actions_buffer).norm(p=2, dim=1).mean()
         yaw_loss = (yaws_buffer).norm(p=2, dim=1).mean()
 
         loss = depth_actor_loss + yaw_loss
+        # NB: upstream clipped only the actor, leaving the depth encoder -- the
+        # bulk of the parameters -- unclipped.
+        params = [*self.depth_actor.parameters(), *self.depth_encoder.parameters()]
         self.depth_actor_optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(self.depth_actor.parameters(), self.max_grad_norm)
-        self.depth_actor_optimizer.step()
+        grad_norm = nn.utils.clip_grad_norm_(params, self.max_grad_norm)
+        self.last_grad_norm = float(grad_norm)
+        skipped = self.spike_guard.should_skip(loss.item())
+        if not skipped:
+            self.depth_actor_optimizer.step()
         loss_dict = {
             "depth_actor_loss": depth_actor_loss.item(),
             "yaw_loss": yaw_loss.item(),
             "total_loss": loss.item(),
+            "grad_norm": self.last_grad_norm,
+            "lr": self.learning_rate,
+            "steps_skipped": float(self.spike_guard.num_skipped),
         }
         return loss_dict
 

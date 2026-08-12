@@ -20,6 +20,7 @@ import torch.optim as optim
 from .actor_critic_with_encoder import ActorCriticRMA
 from .feature_extractors.temporal_transformer import TemporalContextEncoder
 from .moe_actor import MoEActor
+from .optim_utils import SpikeGuard, warmup_cosine_lr
 
 
 class DistillationMoE:
@@ -79,6 +80,13 @@ class DistillationMoE:
             lr=self.learning_rate,
         )
 
+        self.peak_lr = self.learning_rate
+        self.warmup_iters = cfg["warmup_iters"]
+        self.total_iters = cfg["total_iters"]
+        self.min_lr_ratio = cfg["min_lr_ratio"]
+        self.spike_guard = SpikeGuard(factor=cfg["spike_factor"])
+        self.last_grad_norm = 0.0
+
         self.loss_coef = {
             "action": cfg["coef_action"],
             "yaw": cfg["coef_yaw"],
@@ -91,6 +99,14 @@ class DistillationMoE:
         }
 
     # ----------------------------------------------------------------- update
+
+    def set_iteration(self, iteration: int) -> None:
+        """Apply the warmup/cosine learning-rate schedule for this iteration."""
+        self.learning_rate = warmup_cosine_lr(
+            iteration, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
+        )
+        for group in self.depth_actor_optimizer.param_groups:
+            group["lr"] = self.learning_rate
 
     def update_depth_actor(self, buffers: dict[str, list[torch.Tensor]]) -> dict[str, float]:
         def _l2(name: str) -> torch.Tensor:
@@ -129,12 +145,16 @@ class DistillationMoE:
             + c["zloss"] * z_loss
         )
 
+        params = [*self.depth_actor.parameters(), *self.depth_encoder.parameters()]
         self.depth_actor_optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(
-            [*self.depth_actor.parameters(), *self.depth_encoder.parameters()], self.max_grad_norm
-        )
-        self.depth_actor_optimizer.step()
+        grad_norm = nn.utils.clip_grad_norm_(params, self.max_grad_norm)
+        self.last_grad_norm = float(grad_norm)
+        # A spike here is what killed an earlier run; skipping the step costs one
+        # batch, letting it through costs the optimiser state.
+        skipped = self.spike_guard.should_skip(loss.item())
+        if not skipped:
+            self.depth_actor_optimizer.step()
 
         return {
             "depth_actor_loss": action_loss.item(),
@@ -146,6 +166,9 @@ class DistillationMoE:
             "smooth_loss": smooth_loss.item(),
             "z_loss": z_loss.item(),
             "total_loss": loss.item(),
+            "grad_norm": self.last_grad_norm,
+            "lr": self.learning_rate,
+            "steps_skipped": float(self.spike_guard.num_skipped),
         }
 
     # ------------------------------------------------------------- multi-gpu

@@ -38,10 +38,16 @@ class ParkourRslRlDepthEncoderCfg(ParkourRslRlBaseCfg):
     encoder_class_name: str = "RecurrentDepthBackbone" 
     depth_shape: tuple[int] = (87, 58)
     hidden_dims: int = 512
-    learning_rate: float = 1.e-3
+    learning_rate: float = 5.e-4
     num_steps_per_env: int = 24 * 5
     # mask the terrain-class one-hot out of the student input (see MoE cfg)
     zero_env_class: bool = True
+    # identical schedule to the MoE student: the two arms must differ only in
+    # architecture, not in optimiser
+    warmup_iters: int = 500
+    total_iters: int = 15000
+    min_lr_ratio: float = 0.1
+    spike_factor: float = 5.0
 
 @configclass
 class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
@@ -54,7 +60,14 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
 
     depth_shape: tuple[int] = (87, 58)
     num_steps_per_env: int = 24 * 5
-    learning_rate: float = 1.e-3
+    # Peak LR, halved from the upstream 1e-3. That value is fine for a student
+    # warm-started from the teacher's actor; this one trains from scratch, and
+    # at 1e-3 without warmup a run diverged irrecoverably at iteration 1020.
+    learning_rate: float = 5.e-4
+    warmup_iters: int = 500
+    total_iters: int = 15000
+    min_lr_ratio: float = 0.1
+    spike_factor: float = 5.0
 
     # -- token construction
     prop_window: int = 5          # 50 Hz proprioceptive samples per token (= 100 ms)

@@ -358,9 +358,12 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
+        # keep the LR schedule tied to the budget actually being run
+        self.alg.total_iters = tot_iter
         num_pretrain_iter = 0
         for it in range(start_iter, tot_iter):
             start = time.time()
+            self.alg.set_iteration(it)
             actions_buffer = []
             delta_yaw_ok_buffer = []
             yaws_buffer = []

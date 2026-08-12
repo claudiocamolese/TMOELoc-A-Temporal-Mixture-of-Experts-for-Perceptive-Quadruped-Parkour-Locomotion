@@ -67,6 +67,8 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
+        # keep the LR schedule tied to the budget actually being run
+        self.alg.total_iters = tot_iter
 
         context = None
         vel_pred = None
@@ -74,6 +76,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
         for it in range(start_iter, tot_iter):
             start = time.time()
+            self.alg.set_iteration(it)
             buffers: dict[str, list[torch.Tensor]] = {
                 "action": [],
                 "yaw": [],
