@@ -1,0 +1,56 @@
+{
+  "variant": "DistillationMoE",
+  "checkpoint": "logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/model_1500.pt",
+  "tag": "probe1500",
+  "terrains": {
+    "parkour": {
+      "mxd_mean": 0.25892857142857145,
+      "mxd_std": 0.1104403292576159,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 14
+    },
+    "parkour_demo": {
+      "mxd_mean": 0.0625,
+      "mxd_std": 0.0625,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 4
+    },
+    "parkour_flat": {
+      "mxd_mean": NaN,
+      "mxd_std": NaN,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 0
+    },
+    "parkour_gap": {
+      "mxd_mean": 0.1527777777777778,
+      "mxd_std": 0.14163943093313291,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 9
+    },
+    "parkour_hurdle": {
+      "mxd_mean": 0.0,
+      "mxd_std": 0.0,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 1
+    },
+    "parkour_step": {
+      "mxd_mean": 0.28125,
+      "mxd_std": 0.13621559198564606,
+      "mev_mean": NaN,
+      "mev_std": NaN,
+      "episodes": 4
+    }
+  },
+  "total": {
+    "mxd_mean": 0.19921875,
+    "mxd_std": 0.1427252023941024,
+    "mev_mean": NaN,
+    "mev_std": NaN,
+    "episodes": 32
+  }
+}

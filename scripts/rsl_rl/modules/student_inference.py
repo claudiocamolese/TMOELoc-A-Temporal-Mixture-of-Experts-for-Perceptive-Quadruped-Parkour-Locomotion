@@ -103,6 +103,9 @@ class StudentPolicy:
         self.vel_pred = None
         self.yaw_pred = None
         self.depth_latent = None
+        # optional causal test: directions to project out of the context, so that
+        # "c_t encodes the dynamics" can be separated from "the actor uses it"
+        self.ablation_basis: torch.Tensor | None = None
         # last-step diagnostics, filled on every act()
         self.last_gates = None
         self.last_context = None
@@ -117,6 +120,27 @@ class StudentPolicy:
         if index is not None and not self.is_moe:
             raise ValueError("--force_expert only applies to the Mixture-of-Experts student.")
         self.forced_expert = index
+
+    def ablate_context(self, directions) -> None:
+        """Project the given directions out of the context before the actor sees it.
+
+        ``directions`` is (k, context_dim). They are orthonormalised first, so
+        overlapping probe directions are removed once rather than twice.
+        """
+        if directions is None:
+            self.ablation_basis = None
+            return
+        d = torch.as_tensor(directions, dtype=torch.float32, device=self.device)
+        if d.ndim == 1:
+            d = d[None, :]
+        q, _ = torch.linalg.qr(d.T)          # (context_dim, k) orthonormal columns
+        self.ablation_basis = q
+        print(f"[INFO]: ablating a {q.shape[1]}-dimensional subspace of the {q.shape[0]}-d context")
+
+    def _apply_ablation(self, context: torch.Tensor) -> torch.Tensor:
+        if self.ablation_basis is None:
+            return context
+        return context - (context @ self.ablation_basis) @ self.ablation_basis.T
 
     def reset(self, dones=None) -> None:
         if dones is None:
@@ -145,7 +169,8 @@ class StudentPolicy:
         if self.is_moe:
             if is_perception_step or self.context is None:
                 out = self.depth_encoder(depth_image, prop_ctx)
-                self.context, self.vel_pred, self.yaw_pred = out["context"], out["vel"], out["yaw"]
+                self.context = self._apply_ablation(out["context"])
+                self.vel_pred, self.yaw_pred = out["vel"], out["yaw"]
             self.depth_encoder.push_proprioception(prop_ctx)
             obs[:, YAW_SLICE] = self.yaw_pred
 

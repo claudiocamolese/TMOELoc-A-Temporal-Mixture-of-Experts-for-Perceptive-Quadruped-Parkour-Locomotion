@@ -33,9 +33,15 @@ class PreLNTransformerBlock(nn.Module):
         )
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, attn_mask: torch.Tensor | None = None, need_weights: bool = False
+    ) -> torch.Tensor:
         h = self.norm_attn(x)
-        attn_out, _ = self.attn(h, h, h, attn_mask=attn_mask, need_weights=False)
+        attn_out, weights = self.attn(
+            h, h, h, attn_mask=attn_mask, need_weights=need_weights, average_attn_weights=True
+        )
+        # (batch, query, key) averaged over heads; kept for the attention probe
+        self.last_attention = weights
         x = x + self.dropout(attn_out)
         h = self.norm_ff(x)
         x = x + self.dropout(self.ff(h))
@@ -121,6 +127,9 @@ class TemporalContextEncoder(nn.Module):
         self.prop_buffer = torch.zeros(0, self.prop_window, self.num_prop)
         self.token_buffer = torch.zeros(0, self.history_len, self.d_model)
         self._initialised = False
+        # attention probe, off during training (need_weights costs a softmax copy)
+        self.capture_attention = False
+        self.last_attention: torch.Tensor | None = None
 
     # ------------------------------------------------------------------ state
 
@@ -176,8 +185,16 @@ class TemporalContextEncoder(nn.Module):
 
         x = self.token_buffer + self.pos_embedding
         for block in self.blocks:
-            x = block(x, attn_mask=self.causal_mask)
+            x = block(x, attn_mask=self.causal_mask, need_weights=self.capture_attention)
         c_t = self.context_proj(self.norm_out(x[:, -1]))
+
+        if self.capture_attention:
+            # attention paid by the newest token to each position of the window.
+            # This is what decides whether the 0.8 s window is used at all, or
+            # whether the model is effectively reading only the current frame.
+            self.last_attention = torch.stack(
+                [b.last_attention[:, -1, :] for b in self.blocks], dim=1
+            )  # (batch, layers, history_len)
 
         return {
             "context": c_t,

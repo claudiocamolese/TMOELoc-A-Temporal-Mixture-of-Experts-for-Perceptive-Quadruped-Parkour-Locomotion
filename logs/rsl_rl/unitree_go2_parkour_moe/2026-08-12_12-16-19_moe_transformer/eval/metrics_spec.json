@@ -1,0 +1,42 @@
+{
+  "variant": "DistillationMoE",
+  "checkpoint": "logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/model_1500.pt",
+  "tag": "spec",
+  "terrains": {
+    "parkour": {
+      "mxd_mean": 0.21153846153846154,
+      "mxd_std": 0.09663341943385471,
+      "mev_mean": 0.06894736842105263,
+      "mev_std": 0.27025124249857235,
+      "episodes": 26
+    },
+    "parkour_gap": {
+      "mxd_mean": 0.21551724137931033,
+      "mxd_std": 0.07742639991556022,
+      "mev_mean": 0.05737662337662338,
+      "mev_std": 0.2850497809775543,
+      "episodes": 87
+    },
+    "parkour_hurdle": {
+      "mxd_mean": 0.125,
+      "mxd_std": 0.125,
+      "mev_mean": 0.010461538461538461,
+      "mev_std": 0.11182996391129871,
+      "episodes": 2
+    },
+    "parkour_step": {
+      "mxd_mean": 0.1346153846153846,
+      "mxd_std": 0.03330866937632457,
+      "mev_mean": 0.2796842105263158,
+      "mev_std": 0.6067062978542054,
+      "episodes": 13
+    }
+  },
+  "total": {
+    "mxd_mean": 0.205078125,
+    "mxd_std": 0.08375695954059206,
+    "mev_mean": 0.09413541666666667,
+    "mev_std": 0.3624036975468928,
+    "episodes": 128
+  }
+}

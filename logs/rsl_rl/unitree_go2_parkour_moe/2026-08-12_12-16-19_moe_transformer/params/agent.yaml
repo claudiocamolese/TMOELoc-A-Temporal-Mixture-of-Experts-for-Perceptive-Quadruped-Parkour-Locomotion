@@ -1,0 +1,132 @@
+seed: 1
+device: cuda:0
+num_steps_per_env: 24
+max_iterations: 15000
+empirical_normalization: false
+policy:
+  class_name: ActorCriticRMA
+  init_noise_std: 1.0
+  noise_std_type: scalar
+  actor_hidden_dims:
+  - 512
+  - 256
+  - 128
+  critic_hidden_dims:
+  - 512
+  - 256
+  - 128
+  activation: elu
+  tanh_encoder_output: false
+  scan_encoder_dims:
+  - 128
+  - 64
+  - 32
+  priv_encoder_dims:
+  - 64
+  - 20
+  actor:
+    num_priv_explicit: 9
+    num_priv_latent: 29
+    num_prop: 53
+    num_scan: 132
+    num_hist: 10
+    class_name: Actor
+    state_history_encoder:
+      num_priv_explicit: 9
+      num_priv_latent: 29
+      num_prop: 53
+      num_scan: 132
+      num_hist: 10
+      class_name: StateHistoryEncoder
+      channel_size: 10
+algorithm:
+  class_name: DistillationMoE
+  num_learning_epochs: 5
+  num_mini_batches: 4
+  learning_rate: 0.0002
+  schedule: adaptive
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: 0.01
+  desired_kl: 0.01
+  max_grad_norm: 1.0
+  value_loss_coef: 1.0
+  use_clipped_value_loss: true
+  clip_param: 0.2
+  normalize_advantage_per_mini_batch: false
+  symmetry_cfg: null
+  rnd_cfg: null
+clip_actions: 4.8
+save_interval: 100
+experiment_name: unitree_go2_parkour_moe
+run_name: moe_transformer
+logger: wandb
+neptune_project: isaaclab
+wandb_project: parkour-moe-transformer
+resume: false
+load_run: .*
+load_checkpoint: model_.*.pt
+estimator:
+  num_priv_explicit: 9
+  num_priv_latent: 29
+  num_prop: 53
+  num_scan: 132
+  num_hist: 10
+  class_name: DefaultEstimator
+  train_with_estimated_states: true
+  learning_rate: 0.0001
+  hidden_dims:
+  - 128
+  - 64
+depth_encoder:
+  num_priv_explicit: 9
+  num_priv_latent: 29
+  num_prop: 53
+  num_scan: 132
+  num_hist: 10
+  depth_shape: !!python/tuple
+  - 87
+  - 58
+  num_steps_per_env: 120
+  learning_rate: 0.001
+  warmup_iters: 500
+  total_iters: 15000
+  min_lr_ratio: 0.1
+  spike_factor: 5.0
+  action_target_clip: 4.8
+  prop_window: 5
+  depth_latent_dim: 32
+  prop_latent_dim: 64
+  history_len: 8
+  d_model: 128
+  n_layers: 2
+  n_heads: 4
+  d_ff: 256
+  dropout: 0.0
+  context_dim: 128
+  num_experts: 4
+  top_k: 2
+  expert_hidden_dims:
+  - 256
+  - 128
+  router_hidden_dim: 128
+  use_vel_in_input: true
+  vel_source: 'true'
+  router_noise_std: 0.3
+  dyn_target: raw_params
+  dyn_dims:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  zero_env_class: true
+  coef_action: 1.0
+  coef_yaw: 1.0
+  coef_terrain: 5.0
+  coef_dyn: 5.0
+  coef_vel: 5.0
+  coef_balance: 0.15
+  coef_smooth: 0.0
+  coef_zloss: 0.001
+runner_class_name: OnPolicyRunnerMoE

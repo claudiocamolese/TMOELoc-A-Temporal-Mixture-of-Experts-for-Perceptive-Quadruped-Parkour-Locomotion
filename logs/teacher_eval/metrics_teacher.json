@@ -1,0 +1,42 @@
+{
+  "variant": "teacher",
+  "checkpoint": "/home/olaf/Claudio/Isaaclab_Parkour/pretrained/teacher/2025-08-13_05-15-58/model_49999.pt",
+  "tag": "teacher",
+  "terrains": {
+    "parkour": {
+      "mxd_mean": 0.8035714285714286,
+      "mxd_std": 0.17496355305594133,
+      "mev_mean": 0.18647368421052632,
+      "mev_std": 0.4118203323654437,
+      "episodes": 7
+    },
+    "parkour_gap": {
+      "mxd_mean": 0.46875,
+      "mxd_std": 0.2557922741210141,
+      "mev_mean": 0.11748051948051948,
+      "mev_std": 0.3903922639479162,
+      "episodes": 4
+    },
+    "parkour_hurdle": {
+      "mxd_mean": NaN,
+      "mxd_std": NaN,
+      "mev_mean": 0.11528205128205128,
+      "mev_std": 0.3545199678813049,
+      "episodes": 0
+    },
+    "parkour_step": {
+      "mxd_mean": 0.7578125,
+      "mxd_std": 0.24394523431243742,
+      "mev_mean": 0.12010526315789474,
+      "mev_std": 0.3669160085642492,
+      "episodes": 16
+    }
+  },
+  "total": {
+    "mxd_mean": 0.7268518518518519,
+    "mxd_std": 0.2546717136939827,
+    "mev_mean": 0.13120833333333334,
+    "mev_std": 0.38421049777071714,
+    "episodes": 27
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "variant": "DistillationWithExtractor",
+  "checkpoint": "pretrained/student/2025-09-03_12-07-56/model_99998.pt",
+  "tag": "released",
+  "terrains": {
+    "parkour": {
+      "mxd_mean": 0.7096774193548387,
+      "mxd_std": 0.2042568571276442,
+      "mev_mean": 0.13293233082706768,
+      "mev_std": 0.3543473975178172,
+      "episodes": 31
+    },
+    "parkour_gap": {
+      "mxd_mean": 0.625,
+      "mxd_std": 0.2795084971874737,
+      "mev_mean": 0.14246753246753247,
+      "mev_std": 0.4228841650321198,
+      "episodes": 22
+    },
+    "parkour_hurdle": {
+      "mxd_mean": 0.5,
+      "mxd_std": 0.0,
+      "mev_mean": 0.16256410256410256,
+      "mev_std": 0.4162689902749034,
+      "episodes": 1
+    },
+    "parkour_step": {
+      "mxd_mean": 0.7758620689655172,
+      "mxd_std": 0.1779290296599163,
+      "mev_mean": 0.1081578947368421,
+      "mev_std": 0.35103658190588827,
+      "episodes": 29
+    }
+  },
+  "total": {
+    "mxd_mean": 0.7078313253012049,
+    "mxd_std": 0.2265152362904923,
+    "mev_mean": 0.13787202380952382,
+    "mev_std": 0.39555972434874687,
+    "episodes": 83
+  }
+}

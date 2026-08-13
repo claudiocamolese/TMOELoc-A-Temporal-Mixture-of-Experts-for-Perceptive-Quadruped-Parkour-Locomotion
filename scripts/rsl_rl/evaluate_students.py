@@ -34,6 +34,14 @@ parser.add_argument("--tag", type=str, default=None, help="Name for the output f
 parser.add_argument("--policy", type=str, default="student", choices=["student", "teacher"],
                     help="Evaluate the trained student, or the phase-1 teacher as the distillation ceiling.")
 parser.add_argument("--context_every", type=int, default=10, help="Store the context every N steps.")
+parser.add_argument("--ablate_context", type=str, default=None,
+                    help="probe_directions.npz from fit_context_probe.py: project those directions "
+                         "out of the context, to test whether the actor uses that information.")
+parser.add_argument("--ablate_dims", type=str, default=None,
+                    help="comma-separated names to ablate (default: all in the file).")
+parser.add_argument("--attention", action="store_true", default=False,
+                    help="Record how much attention the newest token pays to each position of the "
+                         "temporal window. Answers whether the 0.8 s history is used at all.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -90,6 +98,14 @@ def main(env_cfg, agent_cfg):  # noqa: C901
     policy_class = TeacherPolicy if args_cli.policy == "teacher" else StudentPolicy
     policy = policy_class(runner, cfg_dict, agent_cfg.device, vel_source=args_cli.vel_source)
     policy.force_expert(args_cli.force_expert)
+    if args_cli.ablate_context:
+        z = np.load(args_cli.ablate_context)
+        names = args_cli.ablate_dims.split(",") if args_cli.ablate_dims else list(z.files)
+        missing = [n for n in names if n not in z.files]
+        if missing:
+            raise SystemExit(f"{args_cli.ablate_context} has no direction for {missing}; it holds {list(z.files)}")
+        policy.ablate_context(np.stack([z[n] for n in names]))
+        print(f"[INFO]: ablated directions: {', '.join(names)}")
     print(f"[INFO]: variant={policy.variant} vel_source={policy.vel_source} forced_expert={args_cli.force_expert}")
 
     parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
@@ -126,6 +142,12 @@ def main(env_cfg, agent_cfg):  # noqa: C901
     # per-episode outcomes, keyed by the terrain the episode was run on
     per_terrain: dict[str, dict[str, list]] = {}
     trace = {k: [] for k in ["gates", "contacts", "terrain", "goal_idx", "base_lin_vel", "dones"]}
+    attention = []
+    if args_cli.attention:
+        enc = getattr(runner.alg, "depth_encoder", None)
+        if not hasattr(enc, "capture_attention"):
+            raise SystemExit("--attention only applies to the Transformer student")
+        enc.capture_attention = True
     contexts, priv_latents, probe_terrain = [], [], []
     terrain_vocab: list[str] = []
 
@@ -176,6 +198,14 @@ def main(env_cfg, agent_cfg):  # noqa: C901
         trace["base_lin_vel"].append(obs[:, policy.priv_explicit_slice][:, :3].cpu().numpy().astype(np.float16))
         trace["dones"].append(done_np)
 
+        # attention is only refreshed on a perception step; recording it on the
+        # others would just duplicate the cached value
+        if args_cli.attention and is_perception_step and enc.last_attention is not None:
+            attention.append(enc.last_attention.cpu().numpy().astype(np.float16))
+            trace_attn_phase = obs[:, 49:53].cpu().numpy().astype(np.float16)
+            trace.setdefault("attn_contacts", []).append(trace_attn_phase)
+            trace.setdefault("attn_terrain", []).append(codes_before)
+
         if step % args_cli.context_every == 0:
             contexts.append(policy.last_context.cpu().numpy().astype(np.float16))
             priv_latents.append(obs[:, 194:223].cpu().numpy().astype(np.float16))
@@ -219,12 +249,14 @@ def main(env_cfg, agent_cfg):  # noqa: C901
 
     with open(os.path.join(out_dir, f"metrics_{tag}.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
+    extra = {"attention": np.asarray(attention)} if attention else {}
     np.savez_compressed(
         os.path.join(out_dir, f"trace_{tag}.npz"),
         terrain_vocab=np.asarray(terrain_vocab),
         context=np.asarray(contexts),
         priv_latent=np.asarray(priv_latents),
         probe_terrain=np.asarray(probe_terrain),
+        **extra,
         **{k: np.asarray(v) for k, v in trace.items()},
     )
     print(f"\n[INFO]: wrote {out_dir}/metrics_{tag}.json and trace_{tag}.npz")

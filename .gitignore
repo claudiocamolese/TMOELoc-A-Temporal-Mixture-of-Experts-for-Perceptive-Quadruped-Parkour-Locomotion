@@ -30,6 +30,23 @@ mlruns/
 *.log
 events.out.tfevents.*
 
+# --- results published with the repo -----------------------------------------
+# git will not look inside an excluded directory, so every level of the path has
+# to be re-included before anything under it can be matched.
+!logs/
+logs/*
+!logs/rsl_rl/
+logs/rsl_rl/*
+!logs/rsl_rl/unitree_go2_parkour_moe/
+!logs/rsl_rl/unitree_go2_parkour_baseline/
+!logs/teacher_eval/
+!logs/released_student_eval/
+
+# Tensorboard event files and console logs stay out: every series they hold is
+# on wandb, and the console log alone is 21 MB for one run.
+events.out.tfevents.*
+!logs/run_experiments.out
+
 # Trained models, checkpoints and exported policies
 models/
 checkpoints/
@@ -39,6 +56,12 @@ checkpoints/
 *.onnx
 *.engine
 *.jit
+
+# Slimmed checkpoints are publishable. A raw training checkpoint is 103 MB, of
+# which 66.6 MB is Adam state that is only needed to resume training; GitHub
+# rejects any file over 100 MB, so commit the 36.5 MB export instead:
+#   python scripts/export_slim_checkpoint.py <run_dir> --every 5000
+!**/slim/*.pt
 
 # Isaac Sim / Omniverse generated data
 .kit/
