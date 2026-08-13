@@ -1,0 +1,30 @@
+{
+  "trace": "logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/analysis/trace_probe.npz",
+  "probes": {
+    "mass": {
+      "r2": 0.7563915523293985,
+      "r2_shuffled_control": -0.008212778877449978
+    },
+    "com_x": {
+      "r2": 0.5264629567147427,
+      "r2_shuffled_control": -0.012510532022523169
+    },
+    "com_y": {
+      "r2": 0.8980994059299121,
+      "r2_shuffled_control": -0.0056994763410676
+    },
+    "com_z": {
+      "r2": -0.15964071506258626,
+      "r2_shuffled_control": -0.008234942889498997
+    },
+    "friction": {
+      "r2": -0.22058522797627678,
+      "r2_shuffled_control": -0.007729091210004091
+    }
+  },
+  "saved_directions": [
+    "mass",
+    "com_x",
+    "com_y"
+  ]
+}
