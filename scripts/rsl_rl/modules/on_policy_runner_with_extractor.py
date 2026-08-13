@@ -411,6 +411,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     obs, dones = (obs.to(self.device), dones.to(self.device))
                 additional_obs['delta_yaw_ok'] = infos["observations"]['delta_yaw_ok']
                 additional_obs['depth_camera'] = infos["observations"]['depth_camera']
+                # same treatment the Transformer student gives its token window:
+                # temporal state must not carry across an episode boundary
+                self.alg.depth_encoder.reset(dones)
                 # perform normalization
                 obs = self.obs_normalizer(obs)
                 if self.log_dir is not None:

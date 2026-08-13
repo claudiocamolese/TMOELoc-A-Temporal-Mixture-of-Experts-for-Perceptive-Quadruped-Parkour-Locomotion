@@ -119,12 +119,14 @@ class StudentPolicy:
         self.forced_expert = index
 
     def reset(self, dones=None) -> None:
-        if not self.is_moe or dones is None:
-            # NB: the GRU backbone is deliberately left alone. It was never reset
-            # across episodes during training either, and evaluation has to match.
+        if dones is None:
             return
+        # Both students clear their temporal state on episode boundaries: the
+        # Transformer its token window, the GRU its hidden state. Evaluation
+        # mirrors training for each.
         self.depth_encoder.reset(dones)
-        self.depth_actor.reset(dones)
+        if self.is_moe:
+            self.depth_actor.reset(dones)
 
     def _student_prop(self, obs: torch.Tensor, blank_yaw: bool) -> torch.Tensor:
         prop = obs[:, : self.num_prop].clone()

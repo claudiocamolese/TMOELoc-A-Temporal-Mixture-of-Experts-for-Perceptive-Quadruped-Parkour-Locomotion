@@ -72,3 +72,19 @@ class RecurrentDepthBackbone(nn.Module):
 
     def detach_hidden_states(self):
         self.hidden_states = self.hidden_states.detach().clone()
+
+    def reset(self, dones=None):
+        """Clear the recurrent state for environments that just terminated.
+
+        Upstream never did this, so the hidden state carried across episode
+        boundaries and the latent for a fresh episode was conditioned on the
+        previous one. The Transformer student resets its token window on done,
+        so leaving the GRU unreset would make the comparison an architecture
+        difference *plus* a bookkeeping difference.
+
+        Branchless, to avoid a device synchronisation on every control step.
+        """
+        if dones is None or self.hidden_states.shape[1] == 0:
+            return
+        keep = (~dones.bool()).view(1, -1, 1).to(self.hidden_states.dtype)
+        self.hidden_states = self.hidden_states * keep
