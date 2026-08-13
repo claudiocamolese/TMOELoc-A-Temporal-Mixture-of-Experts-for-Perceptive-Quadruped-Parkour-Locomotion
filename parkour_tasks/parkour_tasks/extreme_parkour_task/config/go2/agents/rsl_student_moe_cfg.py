@@ -71,3 +71,56 @@ class UnitreeGo2ParkourStudentMoEPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class UnitreeGo2ParkourStudentMoERiskPPORunnerCfg(UnitreeGo2ParkourStudentMoEPPORunnerCfg):
+    """Failure-aware variant: same architecture, different objective.
+
+    Everything that defines the comparison is inherited unchanged -- the frozen
+    phase-1 teacher, the environment, 15 000 iterations, peak LR 1e-3 with the
+    same warmup and cosine, the Transformer context and the top-2 mixture. The
+    only difference is *which timesteps the action loss cares about*.
+
+    The measurement that motivates it, on the 12.5k checkpoint of the first run:
+
+      pace              31.2 vs the teacher's 32.6 goals per env-minute  (-4%)
+      falls             0.188 vs 0.073 per 1000 steps                    (2.6x)
+      fall foresight    a linear readout of c_t sees a fall coming one second
+                        ahead at AUC 0.73, control 0.54
+      convergence       terrain_levels flat since iteration 11 000 while the
+                        action loss kept falling 3.4% per 1000 iterations
+
+    Read together: the student is not slow and it is not blind, it fails rarely
+    and expensively, the failures are foreseeable from the vector the actor
+    already consumes, and the plateau says more gradient on the same objective
+    buys nothing. So the objective is what changes.
+    """
+
+    experiment_name = "unitree_go2_parkour_moe_risk"
+    run_name = "moe_transformer_risk"
+
+    depth_encoder = ParkourRslRlTemporalMoECfg(
+        learning_rate=1e-3,
+        num_steps_per_env=24 * 5,
+        use_risk_head=True,
+        coef_risk=1.0,
+        risk_weight=4.0,
+        risk_weight_warmup=2000,
+        # Drop com_z and friction from the dynamics targets. Probed on the first
+        # run's context with an environment-wise split, they are not recoverable
+        # at all -- linear R^2 0.07 and -0.25, and a head of the same shape as
+        # the real one does worse still at -0.24 and -0.49, i.e. it overfits
+        # noise. Friction is the clear case: nothing in a depth image or in a
+        # gait that has not yet slipped carries it.
+        #
+        # The three that stay are real: mass 0.79, com_y 0.92, com_x 0.38 held
+        # out, and projecting those directions out of the context at inference
+        # slowed the policy by 2.2 sigma, so the actor does use them.
+        #
+        # Note that the training log's dyn_loss of 0.26 is an in-sample number:
+        # mass and COM are constant per environment, so once c_t identifies the
+        # environment the head can memorise 192 values. The held-out probe is
+        # the honest measure, and it is what these indices follow.
+        dyn_dims=[0, 1, 2],
+    )

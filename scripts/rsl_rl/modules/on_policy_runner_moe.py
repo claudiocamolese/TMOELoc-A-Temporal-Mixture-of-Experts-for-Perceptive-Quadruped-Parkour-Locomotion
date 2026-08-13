@@ -59,6 +59,15 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             num_prop + num_scan + num_priv_explicit + num_priv_latent,
         )
 
+        # A termination is a fall or a completed course; only the first is a
+        # failure, and the goal counter is what distinguishes them. It has to be
+        # read *before* env.step, because the reset that follows a termination
+        # zeroes it.
+        parkour_term = self.env.unwrapped.parkour_manager.get_term("base_parkour")
+        num_goals = int(parkour_term.num_goals)
+        risk_lead = int(self.depth_encoder_cfg.get("risk_lead", 25))
+        risk_horizon = int(self.depth_encoder_cfg.get("risk_horizon", 75))
+
         self.alg.depth_encoder.train()
         self.alg.depth_actor.train()
         self.start_learning_iteration = copy(self.current_learning_iteration)
@@ -84,6 +93,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             )
 
         context = None
+        risk_pred = None
         vel_pred = None
         yaw_pred = None
 
@@ -99,7 +109,13 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 "balance": [],
                 "smooth": [],
                 "zloss": [],
+                "risk_pred": [],
+                "risk_label": [],
+                "risk_valid": [],
             }
+            # per-step termination record, used after the rollout to label each
+            # step with whether a fall followed it
+            fall_log: list[torch.Tensor] = []
             delta_yaw_ok_buffer = []
             # divergence diagnostics, accumulated on device to avoid per-step syncs
             diag = {k: torch.zeros((), device=self.device) for k in ("act_s", "act_t", "ctx", "obs")}
@@ -117,6 +133,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 if is_perception_step or context is None:
                     out = self.alg.depth_encoder(depth_image.clone(), prop_ctx)
                     context, vel_pred, yaw_pred = out["context"], out["vel"], out["yaw"]
+                    risk_pred = out.get("risk")
 
                     with torch.no_grad():
                         z_scan_teacher = self.alg.policy.actor.infer_scandots_latent(obs)
@@ -174,12 +191,21 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                     buffers["smooth"].append(self.alg.depth_actor.routing_smoothness_loss())
                     buffers["zloss"].append(self.alg.depth_actor.router_z_loss())
 
+                if self.alg.use_risk_head and risk_pred is not None:
+                    # the cached prediction applies to every control step until
+                    # the next perception step, exactly as the context does
+                    buffers["risk_pred"].append(risk_pred)
+                    goal_before = parkour_term.cur_goal_idx.clone()
+
                 # ---- environment step ---------------------------------------
                 obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))
                 obs, dones = obs.to(self.device), dones.to(self.device)
                 delta_yaw_ok = infos["observations"]["delta_yaw_ok"].to(self.device)
                 depth_image = infos["observations"]["depth_camera"].to(self.device)
                 obs = self.obs_normalizer(obs)
+
+                if self.alg.use_risk_head and risk_pred is not None:
+                    fall_log.append(dones.bool() & (goal_before < num_goals - 1))
 
                 # unlike the original GRU backbone, temporal state does not leak
                 # across episode boundaries
@@ -199,6 +225,28 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             stop = time.time()
             collection_time = stop - start
             start = stop
+
+            if self.alg.use_risk_head and fall_log:
+                # Label each step with "a fall follows in [t+lead, t+horizon)".
+                # The lead excludes the states where the robot is already past
+                # the tilt cutoff -- predicting those is bookkeeping, and a head
+                # trained on them would fire too late to be worth weighting by.
+                #
+                # A step is only labelled when its whole window fits inside the
+                # rollout; beyond that a quiet window cannot be told apart from
+                # an unobserved one, so those steps are masked out rather than
+                # counted as negatives.
+                falls = torch.stack(fall_log)                       # (T, num_envs)
+                T = falls.shape[0]
+                labels, valids = [], []
+                for t in range(T):
+                    hi = t + risk_horizon
+                    ok = hi <= T
+                    window = falls[t + risk_lead: hi] if ok else falls[0:0]
+                    labels.append(window.any(dim=0) if window.numel() else torch.zeros_like(falls[0]))
+                    valids.append(torch.full_like(falls[0], ok))
+                buffers["risk_label"] = labels
+                buffers["risk_valid"] = valids
 
             delta_yaw_ok_percentage = sum(delta_yaw_ok_buffer) / len(delta_yaw_ok_buffer)
             routing_stats = self.alg.depth_actor.routing_stats()

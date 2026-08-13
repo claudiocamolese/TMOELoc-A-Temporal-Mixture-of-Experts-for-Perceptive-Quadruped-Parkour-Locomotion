@@ -106,6 +106,9 @@ class StudentPolicy:
         # optional causal test: directions to project out of the context, so that
         # "c_t encodes the dynamics" can be separated from "the actor uses it"
         self.ablation_basis: torch.Tensor | None = None
+        # analysis-only switches, all inert by default (see set_intervention)
+        self.zero_depth = False
+        self.zero_context = False
         # last-step diagnostics, filled on every act()
         self.last_gates = None
         self.last_context = None
@@ -120,6 +123,37 @@ class StudentPolicy:
         if index is not None and not self.is_moe:
             raise ValueError("--force_expert only applies to the Mixture-of-Experts student.")
         self.forced_expert = index
+
+    def set_intervention(self, name: str) -> None:
+        """Switch on one analysis intervention, leaving every weight untouched.
+
+        Every mode is a controlled deletion: the reference run and the
+        intervened run share the checkpoint, the environment and the seed, so a
+        difference in outcome is attributable to the deleted pathway alone.
+
+          none           the policy as trained
+          zero_context   c_t := 0            does the actor use the encoder at all
+          no_depth       depth frame := 0    is c_t carrying vision, or only
+                                             proprioceptive memory
+          uniform_attn   attention := 1/H    is the self-attention doing more
+                                             than a mean pool over the window
+          uniform_gates  gates := 1/K        plain ensemble: routing removed,
+                                             every expert kept
+          dense          gates := softmax    routing kept, sparsity removed
+          top1           gates := argmax     sparser than trained
+          expert{0..3}   one expert alone    what a single expert can do
+        """
+        self.zero_depth = name == "no_depth"
+        self.zero_context = name == "zero_context"
+        for blk in getattr(self.depth_encoder, "blocks", []):
+            blk.uniform_attention = name == "uniform_attn"
+        if self.is_moe:
+            self.depth_actor.gate_override = (
+                name if name in ("uniform_gates", "dense", "top1") else None
+            )
+            if name == "uniform_gates":
+                self.depth_actor.gate_override = "uniform"
+            self.force_expert(int(name[6:]) if name.startswith("expert") else None)
 
     def ablate_context(self, directions) -> None:
         """Project the given directions out of the context before the actor sees it.
@@ -165,11 +199,15 @@ class StudentPolicy:
     @torch.no_grad()
     def act(self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool) -> torch.Tensor:
         prop_ctx = self._student_prop(obs, blank_yaw=True)
+        if self.zero_depth:
+            depth_image = torch.zeros_like(depth_image)
 
         if self.is_moe:
             if is_perception_step or self.context is None:
                 out = self.depth_encoder(depth_image, prop_ctx)
                 self.context = self._apply_ablation(out["context"])
+                if self.zero_context:
+                    self.context = torch.zeros_like(self.context)
                 self.vel_pred, self.yaw_pred = out["vel"], out["yaw"]
             self.depth_encoder.push_proprioception(prop_ctx)
             obs[:, YAW_SLICE] = self.yaw_pred

@@ -32,11 +32,41 @@ class PreLNTransformerBlock(nn.Module):
             nn.Linear(d_ff, d_model),
         )
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        # Analysis-only. When set, the learned attention distribution is replaced
+        # by a causal uniform average over the window, leaving every other weight
+        # untouched. It answers the question the attention plot only hints at: if
+        # performance is unchanged, the self-attention is doing the job of a mean
+        # pool and the "Transformer" claim rests on the window, not the routing
+        # of information inside it.
+        self.uniform_attention = False
+
+    def _uniform_attn(self, h: torch.Tensor) -> torch.Tensor:
+        """Exactly the attention sublayer, with the softmax replaced by 1/(i+1).
+
+        Uniform weights are identical across heads, so the per-head split is a
+        no-op here and the value projection can be averaged directly before the
+        output projection.
+        """
+        e = h.shape[-1]
+        w = self.attn.in_proj_weight[2 * e:]                 # value projection
+        b = self.attn.in_proj_bias[2 * e:] if self.attn.in_proj_bias is not None else None
+        v = torch.nn.functional.linear(h, w, b)              # (B, T, E)
+        counts = torch.arange(1, h.shape[1] + 1, device=h.device, dtype=v.dtype).view(1, -1, 1)
+        v = v.cumsum(dim=1) / counts                         # causal running mean
+        return self.attn.out_proj(v)
 
     def forward(
         self, x: torch.Tensor, attn_mask: torch.Tensor | None = None, need_weights: bool = False
     ) -> torch.Tensor:
         h = self.norm_attn(x)
+        if self.uniform_attention:
+            attn_out = self._uniform_attn(h)
+            t = h.shape[1]
+            tri = torch.tril(torch.ones(t, t, device=h.device))
+            self.last_attention = (tri / tri.sum(-1, keepdim=True)).expand(h.shape[0], t, t)
+            x = x + self.dropout(attn_out)
+            h = self.norm_ff(x)
+            return x + self.dropout(self.ff(h))
         attn_out, weights = self.attn(
             h, h, h, attn_mask=attn_mask, need_weights=need_weights, average_attn_weights=True
         )
@@ -122,6 +152,11 @@ class TemporalContextEncoder(nn.Module):
         self.dyn_head = _head(depth_cfg["num_dyn_targets"], tanh=False)
         self.vel_head = _head(depth_cfg["num_priv_explicit"], tanh=False)
         self.yaw_head = _head(2, tanh=True)
+        # Optional: one logit for "this episode falls within the next second".
+        # Built only when enabled, so a checkpoint trained without it still loads
+        # into this class unchanged.
+        self.use_risk_head = bool(depth_cfg.get("use_risk_head", False))
+        self.risk_head = _head(1, tanh=False) if self.use_risk_head else None
 
         # temporal state, lazily sized on the first forward pass
         self.prop_buffer = torch.zeros(0, self.prop_window, self.num_prop)
@@ -196,7 +231,7 @@ class TemporalContextEncoder(nn.Module):
                 [b.last_attention[:, -1, :] for b in self.blocks], dim=1
             )  # (batch, layers, history_len)
 
-        return {
+        out = {
             "context": c_t,
             "terrain": self.terrain_head(c_t),
             "dyn": self.dyn_head(c_t),
@@ -204,3 +239,6 @@ class TemporalContextEncoder(nn.Module):
             # same 1.5 scaling as the original depth encoder yaw output
             "yaw": 1.5 * self.yaw_head(c_t),
         }
+        if self.risk_head is not None:
+            out["risk"] = self.risk_head(c_t).squeeze(-1)  # logit, (batch,)
+        return out

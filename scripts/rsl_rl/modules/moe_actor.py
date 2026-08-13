@@ -93,6 +93,15 @@ class MoEActor(nn.Module):
 
         self.experts = FusedExperts(num_experts, self.in_features, tuple(expert_hidden_dims), num_actions, act)
 
+        # Analysis-only: replace the learned gate distribution after it is
+        # computed. None keeps training and normal evaluation exactly as they
+        # were; the other modes exist to separate "the mixture helps" from
+        # "the routing helps" from "sparsity helps".
+        #   "uniform"  every expert at 1/K       -> a plain ensemble, no routing
+        #   "dense"    the full softmax, no top-k -> routing without sparsity
+        #   "top1"     the single best expert     -> sparser than trained
+        self.gate_override: str | None = None
+
         # cached routing state (refreshed at perception rate)
         self.gates: torch.Tensor | None = None  # sparse, renormalised top-k weights
         self.probs: torch.Tensor | None = None  # dense softmax, for the aux losses
@@ -120,9 +129,17 @@ class MoEActor(nn.Module):
             logits = logits + self.router_noise_std * torch.randn_like(logits)
         probs = torch.softmax(logits, dim=-1)
 
-        topk_vals, topk_idx = torch.topk(probs, self.top_k, dim=-1)
-        gates = torch.zeros_like(probs)
-        gates.scatter_(1, topk_idx, topk_vals / (topk_vals.sum(dim=-1, keepdim=True) + 1e-8))
+        k = self.top_k
+        if self.gate_override == "uniform":
+            gates = torch.full_like(probs, 1.0 / self.num_experts)
+        else:
+            if self.gate_override == "dense":
+                k = self.num_experts
+            elif self.gate_override == "top1":
+                k = 1
+            topk_vals, topk_idx = torch.topk(probs, k, dim=-1)
+            gates = torch.zeros_like(probs)
+            gates.scatter_(1, topk_idx, topk_vals / (topk_vals.sum(dim=-1, keepdim=True) + 1e-8))
 
         self.prev_probs = self.probs
         self.probs = probs

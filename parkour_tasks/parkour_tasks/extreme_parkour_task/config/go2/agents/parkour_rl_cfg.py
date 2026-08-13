@@ -123,6 +123,32 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     # because the actuator-gain randomisation event is disabled.
     dyn_dims: list[int] = [0, 1, 2, 3, 4]
 
+    # -- failure-aware distillation (all inert at these defaults)
+    #
+    # Measured on the 12.5k checkpoint: the student matches 96% of the teacher's
+    # pace but falls 2.6x as often, and the whole gap is falls. A *linear* readout
+    # of c_t predicts a fall one second before it happens at AUC 0.73 (shuffled
+    # control 0.54), so the warning is already in the vector the actor consumes
+    # and the actor is not acting on it. Meanwhile the action loss keeps falling
+    # while terrain_levels has been flat since iteration 11k: the imitation
+    # objective averages over every timestep, and the timesteps that decide the
+    # episode are a fraction of a percent of them.
+    #
+    # So: predict the risk, and let the prediction decide how much each timestep
+    # counts towards the action loss.
+    use_risk_head: bool = False
+    risk_lead: int = 25       # control steps to skip (0.5 s): already-falling states
+    risk_horizon: int = 75    # a fall in [lead, horizon) counts, i.e. 0.5-1.5 s ahead
+    coef_risk: float = 1.0
+    # 0 keeps the uniform weighting. At w > 0 the per-sample action loss is scaled
+    # by 1 + w * risk, renormalised to mean 1 so the effective step size does not
+    # change, and capped so one confident mistake cannot dominate a batch.
+    risk_weight: float = 0.0
+    risk_weight_cap: float = 5.0
+    # let the head become accurate before its output is trusted to steer the
+    # action loss
+    risk_weight_warmup: int = 2000
+
     # -- ablation hooks (no cost when left at the defaults)
     zero_env_class: bool = True
 

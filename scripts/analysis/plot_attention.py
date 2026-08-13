@@ -126,20 +126,42 @@ def main():
     # anchored left, away from the direct labels that sit at the right edge
     ax1.annotate("uniform", (0, uniform), textcoords="offset points", xytext=(0, 6),
                  color=t["ink3"], fontsize=8.5, ha="left")
+    ends = [a[:, :, l, :].reshape(-1, H).mean(0)[-1] for l in range(L)]
+    # the axis top has to be known before the labels are placed, so it is
+    # computed once here and reused by set_ylim below
+    span = max(0.28, float(np.percentile(a.reshape(-1, L, H)[:, 0, :], 75, axis=0).max() * 1.25))
+    # the two layers can finish within a hair of each other (and of the uniform
+    # line); nudge the direct labels apart rather than letting them overprint
+    label_y = list(ends)
+    if L == 2 and abs(ends[0] - ends[1]) < 0.05 * span:
+        mid = sum(ends) / 2
+        label_y = [mid + 0.035 * span, mid - 0.035 * span]
+        if ends[0] < ends[1]:
+            label_y = label_y[::-1]
+
     for l in range(L):
-        m = a[:, :, l, :].reshape(-1, H).mean(0)
+        flat = a[:, :, l, :].reshape(-1, H)
+        m = flat.mean(0)
+        # The mean alone is misleading: individual steps peak at different
+        # positions, so averaging them flattens the curve towards uniform. The
+        # band is the interquartile range across steps, i.e. the structure that
+        # the mean hides. Replacing this attention with a uniform average is
+        # what the ablation measures, and it costs 3.8x the falls.
+        lo, hi = np.percentile(flat, [25, 75], axis=0)
+        ax1.fill_between(x, lo, hi, color=t["series"][l % 2], alpha=0.16,
+                         linewidth=0, zorder=3)
         ax1.plot(x, m, color=t["series"][l % 2], linewidth=2.0, marker="o",
                  markersize=5.5, markeredgecolor=t["panel"], markeredgewidth=1.4, zorder=4)
-        ax1.annotate(f"layer {l}", (x[-1], m[-1]), textcoords="offset points",
-                     xytext=(7, -1), color=t["series"][l % 2], fontsize=9.5,
+        ax1.annotate(f"layer {l}", (x[-1], label_y[l]), textcoords="offset points",
+                     xytext=(7, 0), color=t["series"][l % 2], fontsize=9.5,
                      fontweight="medium", va="center")
     ax1.set_xticks(x); ax1.set_xticklabels(labels, fontsize=8.5)
     ax1.set_xlim(-0.45, H - 0.45)
-    ax1.set_ylim(0, max(0.28, a.reshape(-1, H).mean(0).max() * 1.25))
+    ax1.set_ylim(0, span)
     ax1.set_xlabel("position in the window (ms into the past)", color=t["ink2"], fontsize=9.5)
     ax1.set_ylabel("attention weight", color=t["ink2"], fontsize=9.5)
-    ax1.set_title("Attention of the newest token", color=t["ink"], fontsize=11.5,
-                  fontweight="semibold", loc="left", pad=10)
+    ax1.set_title("Attention of the newest token   (line = mean, band = IQR)",
+                  color=t["ink"], fontsize=11.5, fontweight="semibold", loc="left", pad=10)
 
     # ---------------------------------------------------------------- panel 2
     ax2 = fig.add_subplot(gs[1]); style(ax2)
@@ -193,9 +215,15 @@ def main():
                   fontweight="semibold", loc="left", pad=10)
 
     older = a.reshape(-1, H).mean(0)[: H - 2].sum()
-    sub = (f"window {H} tokens over {H * STEP_MS / 1000:.1f} s at 10 Hz   ·   "
-           f"{100 * older:.0f}% of the attention sits on tokens older than 200 ms   ·   "
-           f"{T} perception steps × {N} environments")
+    u = 1.0 / H
+    fl = a.reshape(-1, H)
+    kl_sample = float((np.clip(fl, 1e-9, 1) * np.log(np.clip(fl, 1e-9, 1) / u)).sum(-1).mean())
+    mdist = fl.mean(0)
+    kl_mean = float((mdist * np.log(mdist / u)).sum())
+    sub = (f"window {H} tokens = {H * STEP_MS / 1000:.1f} s at 10 Hz   ·   "
+           f"{100 * older:.0f}% of attention older than 200 ms   ·   "
+           f"per-step divergence from uniform is {kl_sample / max(kl_mean, 1e-9):.1f}× "
+           f"the mean curve's   ·   {T} × {N} samples")
     fig.suptitle(args.title or "Temporal attention of the context encoder",
                  color=t["ink"], fontsize=13.5, fontweight="semibold", x=0.055, ha="left", y=0.965)
     fig.text(0.055, 0.895, sub, color=t["ink2"], fontsize=9.5, ha="left")

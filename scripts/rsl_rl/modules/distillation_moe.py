@@ -105,12 +105,32 @@ class DistillationMoE:
             "balance": cfg["coef_balance"],
             "smooth": cfg["coef_smooth"],
             "zloss": cfg["coef_zloss"],
+            "risk": cfg.get("coef_risk", 0.0),
         }
+        self.use_risk_head = bool(cfg.get("use_risk_head", False))
+        self.risk_weight = float(cfg.get("risk_weight", 0.0))
+        self.risk_weight_cap = float(cfg.get("risk_weight_cap", 5.0))
+        self.risk_weight_warmup = int(cfg.get("risk_weight_warmup", 0))
+        self._iteration = 0
 
     # ----------------------------------------------------------------- update
 
+    def current_risk_weight(self) -> float:
+        """Risk weighting, ramped in linearly once the head has had time to learn.
+
+        Trusting an untrained head to say which timesteps matter would just add
+        noise to the action loss for the first few thousand iterations.
+        """
+        if not self.use_risk_head or self.risk_weight <= 0.0:
+            return 0.0
+        it = self._iteration - self.schedule_offset
+        if self.risk_weight_warmup <= 0:
+            return self.risk_weight
+        return self.risk_weight * min(1.0, max(0.0, it / self.risk_weight_warmup))
+
     def set_iteration(self, iteration: int) -> None:
         """Apply the warmup/cosine learning-rate schedule for this iteration."""
+        self._iteration = iteration
         self.learning_rate = warmup_cosine_lr(
             iteration - self.schedule_offset, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
         )
@@ -133,7 +153,22 @@ class DistillationMoE:
                 return torch.zeros((), device=self.device)
             return torch.stack(buffers[name]).mean()
 
-        action_loss = _l2("action")
+        # -- action loss, optionally weighted by how dangerous the step is ----
+        #
+        # The unweighted mean is dominated by ordinary trotting, which the
+        # student already imitates well, while the steps that end episodes are
+        # a fraction of a percent of the batch. Scaling each sample by its
+        # predicted risk moves gradient onto those steps without changing the
+        # overall step size: the weights are renormalised to mean 1.
+        w = self.current_risk_weight()
+        if w > 0.0 and buffers.get("risk_pred") and buffers.get("action"):
+            resid = torch.cat(buffers["action"], dim=0).norm(p=2, dim=1)
+            risk = torch.sigmoid(torch.cat(buffers["risk_pred"], dim=0).detach())
+            weight = (1.0 + w * risk).clamp(max=self.risk_weight_cap)
+            weight = weight / weight.mean().clamp_min(1e-8)
+            action_loss = (weight * resid).mean()
+        else:
+            action_loss = _l2("action")
         yaw_loss = _l2("yaw")
         terrain_loss = _mse("terrain")
         dyn_loss = _mse("dyn")
@@ -141,6 +176,25 @@ class DistillationMoE:
         balance_loss = _scalar("balance")
         smooth_loss = _scalar("smooth")
         z_loss = _scalar("zloss")
+
+        # -- risk head: does this state fall within [lead, horizon) from now ---
+        # Positives are well under 1% of samples, so the loss is balanced by the
+        # observed positive rate; without that the head converges to "never".
+        if self.use_risk_head and buffers.get("risk_pred") and buffers.get("risk_label"):
+            logit = torch.cat(buffers["risk_pred"], dim=0)
+            label = torch.cat(buffers["risk_label"], dim=0).float()
+            valid = torch.cat(buffers["risk_valid"], dim=0).bool()
+            if valid.any():
+                logit, label = logit[valid], label[valid]
+                pos = label.mean().clamp(1e-4, 1 - 1e-4)
+                pos_weight = ((1 - pos) / pos).clamp(max=100.0)
+                risk_loss = nn.functional.binary_cross_entropy_with_logits(
+                    logit, label, pos_weight=pos_weight
+                )
+            else:
+                risk_loss = torch.zeros((), device=self.device)
+        else:
+            risk_loss = torch.zeros((), device=self.device)
 
         c = self.loss_coef
         loss = (
@@ -152,6 +206,7 @@ class DistillationMoE:
             + c["balance"] * balance_loss
             + c["smooth"] * smooth_loss
             + c["zloss"] * z_loss
+            + c["risk"] * risk_loss
         )
 
         params = [*self.depth_actor.parameters(), *self.depth_encoder.parameters()]
@@ -174,6 +229,8 @@ class DistillationMoE:
             "balance_loss": balance_loss.item(),
             "smooth_loss": smooth_loss.item(),
             "z_loss": z_loss.item(),
+            "risk_loss": risk_loss.item(),
+            "risk_weight": w,
             "total_loss": loss.item(),
             "grad_norm": self.last_grad_norm,
             "lr": self.learning_rate,
