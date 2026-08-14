@@ -113,6 +113,53 @@ class DistillationMoE:
         self.risk_weight_warmup = int(cfg.get("risk_weight_warmup", 0))
         self._iteration = 0
 
+    def warm_start_experts_from_teacher(self) -> bool:
+        """Seed every expert's upper layers with the teacher actor's own.
+
+        The GRU baseline copies the teacher's actor wholesale into its student
+        and therefore begins with a working controller, needing only to learn the
+        perception that feeds it. Measured, that is worth a lot: it reaches a
+        given terrain level roughly twice as fast, and it still leads at
+        convergence. The mixture cannot copy wholesale -- an expert reads
+        [proprioception; context; velocity], 190 dims, where the teacher's
+        backbone reads 114 including the privileged scandots latent -- but the
+        shapes line up from the second layer on:
+
+            teacher actor_backbone  114 -> 512 -> 256 -> 128 -> 12
+            expert                         190 -> 256 -> 128 -> 12
+
+        so the mapping from internal features to joint targets transfers exactly,
+        and only the first layer has to learn to produce features in the
+        teacher's own representation. Experts stay distinct because their first
+        layers keep their independent random initialisation.
+
+        Must be called *after* the teacher checkpoint is loaded -- at
+        construction time the policy still holds random weights -- and never on a
+        resume, where it would overwrite trained experts.
+        """
+        backbone = getattr(self.policy.actor, "actor_backbone", None)
+        if backbone is None:
+            print("[WARN]: teacher has no actor_backbone; skipping expert warm start")
+            return False
+        linears = [m for m in backbone if isinstance(m, nn.Linear)]
+        experts = self.depth_actor.experts
+        # pair the teacher's trailing layers with the expert's, back to front
+        pairs = list(zip(reversed(linears), reversed(range(len(experts.weights)))))
+        copied = 0
+        with torch.no_grad():
+            for src, idx in pairs:
+                w, b = experts.weights[idx], experts.biases[idx]
+                # FusedExperts stores (num_experts, in, out); nn.Linear is (out, in)
+                if tuple(w.shape[1:]) != (src.in_features, src.out_features):
+                    break
+                w.copy_(src.weight.data.t().unsqueeze(0).expand_as(w))
+                b.copy_(src.bias.data.view(1, 1, -1).expand_as(b))
+                copied += 1
+        print(f"[INFO]: warm-started {copied} expert layer(s) from the teacher actor "
+              f"({'x'.join(str(d) for d in (self.depth_actor.in_features,))} -> ... -> "
+              f"{linears[-1].out_features})")
+        return copied > 0
+
     # ----------------------------------------------------------------- update
 
     def current_risk_weight(self) -> float:

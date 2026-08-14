@@ -149,6 +149,15 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     # action loss
     risk_weight_warmup: int = 2000
 
+    # -- expert warm start (off by default)
+    #
+    # The GRU baseline copies the teacher's actor into its student and starts
+    # with a working controller; the mixture cannot, and trains its actor from
+    # scratch. Measured, the baseline reaches a given terrain level about twice
+    # as fast and still leads at convergence. This seeds the experts' upper
+    # layers from the teacher's actor, where the shapes line up exactly.
+    warm_start_experts: bool = False
+
     # -- ablation hooks (no cost when left at the defaults)
     zero_env_class: bool = True
 

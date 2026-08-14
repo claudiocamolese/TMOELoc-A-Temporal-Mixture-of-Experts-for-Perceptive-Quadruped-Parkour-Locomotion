@@ -142,3 +142,38 @@ class UnitreeGo2ParkourStudentMoERiskPPORunnerCfg(UnitreeGo2ParkourStudentMoEPPO
         coef_dyn=1.0,
         coef_terrain=1.0,
     )
+
+
+@configclass
+class UnitreeGo2ParkourStudentMoEWarmPPORunnerCfg(UnitreeGo2ParkourStudentMoERiskPPORunnerCfg):
+    """The failure-aware objective, plus a warm-started actor.
+
+    The fallback if cutting the auxiliary budget does not close the gap. The
+    head-to-head says the baseline wins by 2.8 sigma on pace and 3.4 on falls,
+    and the training curves say it gets there roughly twice as fast, reaching a
+    given terrain level at half the iterations. The one structural advantage it
+    has is that its student actor *is* the teacher's actor, copied; it begins
+    with a working controller and has only to learn the perception feeding it.
+
+    A mixture cannot copy wholesale -- its experts read a different input -- but
+    the layer shapes line up from the second layer on, so the mapping from
+    internal features to joint targets transfers exactly and only the first layer
+    has to learn. Experts keep their independent random first layers, so they do
+    not start identical.
+    """
+
+    experiment_name = "unitree_go2_parkour_moe_warm"
+    run_name = "moe_transformer_warm"
+
+    depth_encoder = ParkourRslRlTemporalMoECfg(
+        learning_rate=1e-3,
+        num_steps_per_env=24 * 5,
+        use_risk_head=True,
+        coef_risk=1.0,
+        risk_weight=4.0,
+        risk_weight_warmup=2000,
+        dyn_dims=[0, 1, 2],
+        coef_dyn=1.0,
+        coef_terrain=1.0,
+        warm_start_experts=True,
+    )

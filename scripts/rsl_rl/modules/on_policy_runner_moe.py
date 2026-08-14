@@ -340,9 +340,14 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
         if "depth_encoder_state_dict" in loaded_dict:
             print("Saved temporal context encoder detected, loading...")
             self.alg.depth_encoder.load_state_dict(loaded_dict["depth_encoder_state_dict"])
-        if "depth_actor_state_dict" in loaded_dict:
+        resumed_actor = "depth_actor_state_dict" in loaded_dict
+        if resumed_actor:
             print("Saved MoE actor detected, loading...")
             self.alg.depth_actor.load_state_dict(loaded_dict["depth_actor_state_dict"])
+        elif self.depth_encoder_cfg.get("warm_start_experts", False):
+            # Only when the experts are still at their random initialisation:
+            # on a resume this would overwrite trained weights with the teacher's.
+            self.alg.warm_start_experts_from_teacher()
         if load_optimizer and "depth_actor_optimizer_state_dict" in loaded_dict:
             self.alg.depth_actor_optimizer.load_state_dict(loaded_dict["depth_actor_optimizer_state_dict"])
         if "depth_actor_state_dict" in loaded_dict:
