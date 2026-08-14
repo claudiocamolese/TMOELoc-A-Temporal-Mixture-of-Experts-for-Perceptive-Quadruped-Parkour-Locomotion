@@ -167,8 +167,15 @@ class DistillationMoE:
             weight = (1.0 + w * risk).clamp(max=self.risk_weight_cap)
             weight = weight / weight.mean().clamp_min(1e-8)
             action_loss = (weight * resid).mean()
+            # The weighted mean is what the optimiser sees, but it is not
+            # comparable to a run without weighting: if the dangerous states are
+            # also the hardest to imitate -- the premise of the whole term -- the
+            # weighted mean sits above the plain one by construction. Log both,
+            # so "did imitation get worse" stays answerable across runs.
+            action_loss_unweighted = resid.mean().detach()
         else:
             action_loss = _l2("action")
+            action_loss_unweighted = action_loss.detach()
         yaw_loss = _l2("yaw")
         terrain_loss = _mse("terrain")
         dyn_loss = _mse("dyn")
@@ -222,6 +229,7 @@ class DistillationMoE:
 
         return {
             "depth_actor_loss": action_loss.item(),
+            "depth_actor_loss_unweighted": action_loss_unweighted.item(),
             "yaw_loss": yaw_loss.item(),
             "terrain_loss": terrain_loss.item(),
             "dyn_loss": dyn_loss.item(),
