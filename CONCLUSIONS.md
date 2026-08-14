@@ -1,5 +1,57 @@
 # The MoE student at 15 000 iterations: what it does, where it fails, what to change
 
+## Result: the GRU baseline wins
+
+Both students trained to 15 000 iterations from the same frozen teacher, same
+environment, same optimiser, and were scored in the same way: 2 000-step
+rollouts, 128 environments, the fixed EVAL config, every environment counted
+including the censored ones.
+
+| | pace goals/env-min | fall hazard /1k | courses/env-min |
+|---|---|---|---|
+| **baseline (GRU + dense)** | **27.76 ± 0.56** | **0.168 ± 0.025** | **3.15** |
+| MoE (Transformer + top-2) | 25.38 ± 0.64 | 0.309 ± 0.033 | 2.58 |
+| teacher (privileged) | 28.54 ± 0.61 | 0.098 ± 0.018 | 3.25 |
+
+MoE minus baseline: pace **−2.38 ± 0.85 (2.8σ)**, hazard **+0.141 ± 0.041
+(3.4σ)**, completed courses −18%. The baseline is within 2.7% of the teacher's
+pace and 3% of its completions; it very nearly saturates the ceiling. The MoE
+does not.
+
+Per terrain the baseline leads everywhere except one cell -- on steps the MoE
+falls less (0.231 vs 0.288). That is the only place the architecture wins.
+
+**So the honest headline is a negative result: the temporal Transformer plus
+top-2 mixture, as configured here, does not beat the GRU baseline at equal
+budget.** What follows is why, and what the evidence says to change.
+
+## Why: the objective is split three ways
+
+The most parsimonious explanation is where the gradient goes. The baseline has
+exactly two loss terms and puts everything into imitating the teacher; the MoE
+spends about a third of its objective on auxiliary heads.
+
+| term | MoE share of objective | baseline |
+|---|---|---|
+| actions | 36% | ~100% |
+| dynamics | 35% | -- |
+| yaw | 10% | (its own term) |
+| terrain | 9% | -- |
+| load balancing | 8% | -- |
+
+At convergence the baseline reaches an action loss of 0.690 against the MoE's
+1.316 -- the same quantity, `norm(p=2, dim=1).mean()`, on the same target, and
+by then both are on equally hard terrain. Twice the imitation error, and worse
+performance to match.
+
+The auxiliary heads were added because `c_t` is a 128-d unified context that
+nothing else would ground. The baseline shows that is not necessary: its depth
+latent occupies the slot the teacher fills with its scandots encoding, so it is
+grounded implicitly, through the action loss alone, and it ends up closer to the
+teacher than our explicitly supervised context does.
+
+## The MoE against the teacher
+
 Measured on `model_14999`, 2 000-step rollouts, 128 environments, the fixed EVAL
 config. Student and teacher were scored in the same run of the same script, so
 the comparison carries no protocol difference.
@@ -96,6 +148,36 @@ distribution barely moves (spread 0.076), across phases it does — flight route
 expert 2. Two experts carry 77% of the blended weight; effective expert count is
 1.62 of 4. Attention uses 300 ms of effective lookback out of 700 ms available,
 70% of its mass on tokens older than 200 ms.
+
+
+## A second correction: the ablation's pace numbers were contaminated
+
+Running `zero_context` on the GRU student turned out to be a no-op -- the switch
+was applied only inside the MoE branch -- and yet it reported **+4.74 ± 0.72
+goals/env-min, 6.6σ**. An intervention that changes nothing cannot produce 6.6σ,
+so that number is not an ablation result: it is a measurement of the sweep's own
+systematic error.
+
+The cause is the design. Conditions run back to back inside one simulator, so
+each starts from wherever the previous one left the robots rather than from a
+fresh reset, and the bootstrap resamples environments and cannot see that offset.
+
+What this invalidates, and what survives:
+
+| claim | status |
+|---|---|
+| "routing costs zero pace but triples the falls" | the *pace* half is unresolved; the falls half stands |
+| "top-1 gives +21% throughput" | unresolved, and probably inflated by ordering |
+| "uniform attention costs 20% of the pace" | pace half unresolved; the 2× falls stands |
+| no_depth, zero_context, single experts | **stand** -- effects are 2-4× the artefact |
+
+The hazard effects mostly survive: the artefact is +0.089 there, while the
+measured effects run from +0.3 to +6.3. It is the pace column that was
+contaminated.
+
+Both defects are fixed: `zero_context` now acts on the GRU student too, and the
+sweep repeats its reference condition last, so it prints the gap between two
+identical runs and states outright that any smaller effect is unresolved.
 
 ## What to change
 

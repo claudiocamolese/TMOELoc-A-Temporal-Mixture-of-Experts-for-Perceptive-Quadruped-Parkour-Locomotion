@@ -40,6 +40,9 @@ ALL_CONDITIONS = [
     "dense",          # does sparsity cost anything
     "top1",           # is the second expert earning its keep
     "expert0", "expert1", "expert2", "expert3",
+    # last on purpose: the reference repeated after everything else, so the gap
+    # between the two identical runs measures the ordering bias directly
+    "none_repeat",
 ]
 
 parser = argparse.ArgumentParser(description="Ablate one pathway at a time and measure the cost.")
@@ -150,7 +153,7 @@ def main(env_cfg, agent_cfg):
 
     results, tables = {}, {}
     for cond in conditions:
-        policy.set_intervention(cond)
+        policy.set_intervention("none" if cond == "none_repeat" else cond)
         # clear temporal state so the previous condition's window does not leak in
         policy.reset(torch.ones(env.num_envs, dtype=torch.bool, device=agent_cfg.device))
         rec = {k: [] for k in ["dones", "goal_idx", "terrain", "gates"]}
@@ -229,6 +232,25 @@ def main(env_cfg, agent_cfg):
             verdict = f"IMPROVES ({sg:.1f}s pace, {sf:.1f}s falls)"
         print(f"{cond:<15} | {dg:+11.2f} +- {dgs:<5.2f} | {df:+12.3f} +- {dfs:<5.3f} | {verdict}")
         results[cond].update(d_goals=dg, d_goals_se=dgs, d_hazard=df, d_hazard_se=dfs)
+
+    # Self-calibration. Conditions run back to back inside one simulator, so a
+    # later condition starts from wherever the previous one left the robots
+    # rather than from a fresh reset. The bootstrap resamples environments and
+    # cannot see that offset. Repeating the reference at the end measures it:
+    # whatever separates the two identical runs is systematic error, and any
+    # effect smaller than it means nothing.
+    #
+    # This is not hypothetical. Running "zero_context" on the GRU student, where
+    # it was a no-op, reported +4.74 +- 0.72 goals/env-min -- 6.6 sigma of pure
+    # ordering artefact.
+    if f"{ref}_repeat" in tables:
+        dg, dgs = paired_delta(tables[ref], tables[f"{ref}_repeat"], _goals_per_min)
+        df, dfs = paired_delta(tables[ref], tables[f"{ref}_repeat"], _fall_hazard)
+        print(f"\nSYSTEMATIC ERROR (reference run twice, identical policy):")
+        print(f"  pace {dg:+.2f} +- {dgs:.2f}   hazard {df:+.3f} +- {dfs:.3f}")
+        print(f"  Treat any effect below these magnitudes as unresolved.")
+        results["_systematic_error"] = {"d_goals": dg, "d_goals_se": dgs,
+                                        "d_hazard": df, "d_hazard_se": dfs}
 
     print("\nDeltas are paired: the same environments and terrains under both conditions.")
     print(f"Reference condition: {ref}. {args_cli.steps} steps x {args_cli.num_envs} envs each.")

@@ -1,3 +1,5 @@
 [2026-08-12 12:16:16] START moe  (task=Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-v0 iters=15000 envs=192 seed=1)
 [2026-08-13 14:20:43] END   moe  exit=0
 [2026-08-13 14:20:43] START baseline  (task=Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 iters=15000 envs=192 seed=1)
+[2026-08-13 19:49:32] END   baseline  exit=0
+[2026-08-13 19:49:32] ALL RUNS FINISHED

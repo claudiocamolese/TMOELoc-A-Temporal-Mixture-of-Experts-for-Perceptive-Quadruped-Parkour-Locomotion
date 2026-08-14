@@ -236,6 +236,13 @@ class StudentPolicy:
             latent_and_yaw = self.depth_encoder(depth_image, prop_ctx)
             self.depth_latent = latent_and_yaw[:, :-2]
             self.yaw_pred = 1.5 * latent_and_yaw[:, -2:]
+            # the GRU student's depth latent occupies the slot the teacher fills
+            # with its scandots encoding, so this is the same deletion that
+            # zeroing c_t performs on the MoE. Without it the condition was a
+            # silent no-op on this variant, and a no-op that still reported a
+            # 6.6 sigma effect is what exposed the sequential-order bias below.
+            if self.zero_context:
+                self.depth_latent = torch.zeros_like(self.depth_latent)
         obs[:, YAW_SLICE] = self.yaw_pred
         masked = self.runner.mask_student_obs(obs)
         self.last_context = self.depth_latent.clone()

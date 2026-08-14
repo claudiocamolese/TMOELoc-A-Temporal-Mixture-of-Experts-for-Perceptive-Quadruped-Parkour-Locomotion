@@ -1,0 +1,42 @@
+{
+  "variant": "DistillationWithExtractor",
+  "checkpoint": "logs/rsl_rl/unitree_go2_parkour_baseline/2026-08-13_19-50-32_gru_dense_baseline/model_14999.pt",
+  "tag": "baseline",
+  "terrains": {
+    "parkour": {
+      "mxd_mean": 0.8313492063492064,
+      "mxd_std": 0.13936991530822176,
+      "mev_mean": 0.16678,
+      "mev_std": 0.3923320425354014,
+      "episodes": 63
+    },
+    "parkour_gap": {
+      "mxd_mean": 0.8291284403669725,
+      "mxd_std": 0.14532128915287595,
+      "mev_mean": 0.1346826923076923,
+      "mev_std": 0.41303868705986385,
+      "episodes": 109
+    },
+    "parkour_hurdle": {
+      "mxd_mean": 0.8275,
+      "mxd_std": 0.12472469683266423,
+      "mev_mean": 0.14898,
+      "mev_std": 0.39918035973729976,
+      "episodes": 50
+    },
+    "parkour_step": {
+      "mxd_mean": 0.7708333333333334,
+      "mxd_std": 0.23366791488016586,
+      "mev_mean": 0.16305769230769232,
+      "mev_std": 0.42245695791048615,
+      "episodes": 90
+    }
+  },
+  "total": {
+    "mxd_mean": 0.8125,
+    "mxd_std": 0.17392066420036878,
+    "mev_mean": 0.1495078125,
+    "mev_std": 0.40856904435048036,
+    "episodes": 312
+  }
+}

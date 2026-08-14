@@ -1,0 +1,51 @@
+{
+  "none": {
+    "goals_per_min": 29.3125,
+    "goals_per_min_se": 0.5521031767021535,
+    "fall_hazard_per_1k": 0.15104166666666669,
+    "fall_hazard_se": 0.02832196463092834,
+    "segments": 329,
+    "censored_frac": 0.3860182370820669,
+    "mean_gate": [
+      0.0
+    ]
+  },
+  "zero_context": {
+    "goals_per_min": 34.0625,
+    "goals_per_min_se": 0.6673679908088564,
+    "fall_hazard_per_1k": 0.23958333333333331,
+    "fall_hazard_se": 0.0301962758803123,
+    "segments": 395,
+    "censored_frac": 0.32151898734177214,
+    "mean_gate": [
+      0.0
+    ],
+    "d_goals": 4.744765625,
+    "d_goals_se": 0.7159844510398666,
+    "d_hazard": 0.08860416666666665,
+    "d_hazard_se": 0.04188900833270253
+  },
+  "no_depth": {
+    "goals_per_min": 13.390625,
+    "goals_per_min_se": 0.5497071938982038,
+    "fall_hazard_per_1k": 1.546875,
+    "fall_hazard_se": 0.07296449250011001,
+    "segments": 450,
+    "censored_frac": 0.28444444444444444,
+    "mean_gate": [
+      0.0
+    ],
+    "d_goals": -15.9281640625,
+    "d_goals_se": 0.8158209615151835,
+    "d_hazard": 1.3946458333333336,
+    "d_hazard_se": 0.08184362073618402
+  },
+  "_meta": {
+    "checkpoint": "logs/rsl_rl/unitree_go2_parkour_baseline/2026-08-13_19-50-32_gru_dense_baseline/model_14999.pt",
+    "steps": 1500,
+    "num_envs": 128,
+    "reference": "none",
+    "control_dt": 0.02,
+    "num_goals": 8
+  }
+}
