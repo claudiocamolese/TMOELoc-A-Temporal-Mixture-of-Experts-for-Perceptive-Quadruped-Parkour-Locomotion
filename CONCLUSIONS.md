@@ -98,18 +98,24 @@ a longer run will not close the gap.
 Eleven conditions, one pathway deleted at a time, weights untouched, paired over
 the same 128 terrains. Reference: pace 25.00, hazard 0.302.
 
-| condition | Δ goals/env-min | falls vs reference |
+| condition | Δ goals/env-min | Δ fall hazard |
 |---|---|---|
-| depth frame zeroed | −16.72 ± 0.62 | 5.4× |
-| context zeroed | −9.14 ± 0.80 | 4.9× |
-| attention → uniform | −1.99 ± 0.81 | 2.0× |
-| routing → uniform | **−0.05 ± 0.84** | 2.8× |
-| expert 0 alone | −7.96 ± 0.92 | 4.1× |
-| expert 1 alone | −14.55 ± 0.68 | 4.4× |
-| expert 2 alone | −11.39 ± 0.63 | 6.0× |
-| expert 3 alone | −8.53 ± 0.94 | 21.9× |
-| all 4 experts, soft weights | +5.89 ± 0.80 | 1.3× |
-| top-1 routing | +5.43 ± 0.79 | 1.3× |
+| depth frame zeroed | −18.94 ± 0.58 | +1.329 ± 0.073 |
+| context zeroed | −12.24 ± 0.77 | +1.244 ± 0.064 |
+| expert 1 alone | −18.69 ± 0.56 | +1.115 ± 0.060 |
+| expert 2 alone | −13.24 ± 0.59 | +1.545 ± 0.064 |
+| expert 0 alone | −11.53 ± 0.70 | +1.023 ± 0.048 |
+| expert 3 alone | −11.46 ± 0.86 | +5.729 ± 0.177 |
+| attention → uniform | −2.62 ± 0.69 | +0.177 ± 0.044 |
+| routing → uniform | −2.19 ± 0.82 | +0.585 ± 0.047 |
+| top-1 routing | +1.11 ± 0.75 | +0.135 ± 0.047 |
+| all 4 experts, soft weights | **+2.77 ± 0.67** | +0.070 ± 0.042 |
+| *reference, run again* | *−0.65 ± 0.72* | *−0.034 ± 0.041* |
+
+The last row is the resolution floor: the same policy under the same condition,
+measured twice. Anything smaller than it means nothing. Lengthening the warmup
+between conditions from 50 to 150 steps brought the artefact down from +4.74 to
+−0.65, which is what makes the small effects readable at all.
 
 **Nothing is decoration.** Every deletion costs between 2× and 22× the falls.
 
@@ -118,14 +124,18 @@ average — same weights, same window — doubles the falls. The averaged attent
 curve looks flat only because individual steps peak at different positions;
 per-step divergence from uniform is 3.5× what the mean suggests.
 
-**The router's job is safety, not speed.** This is the sharpest change since
-mid-training. Flattening the gates now costs *nothing* in pace (−0.05 ± 0.84,
-indistinguishable from zero) while tripling the falls. At iteration 12 500 it
-still cost 1.7 goals per minute. The mixture has converged into a fall-avoidance
-mechanism, and no expert can run the course alone.
+**The router earns its keep on both axes.** Flattening the gates costs 2.19
+goals per env-minute and doubles the fall hazard, and no expert can run the
+course alone -- the best manages two thirds of the pace at four times the falls.
+An earlier reading of this as "safety only, no pace cost" was the ordering
+artefact talking.
 
-**Top-1 at inference** goes 21% faster for 1.3× the falls, on weights trained at
-top-2. An operating point, not a free win.
+**Running all four experts is free speed.** Soft weights over the full set give
++2.77 ± 0.67 goals per env-minute -- four times the resolution floor -- at a fall
+cost of +0.070 ± 0.042, which is at the floor. That closes most of the pace gap
+to the baseline at inference time, on weights already trained. It does not touch
+the fall gap, which is the larger deficit. Top-1, by contrast, is marginal on
+pace and worse on falls: the earlier "+21% throughput" was artefact.
 
 ## What the encoder knows
 

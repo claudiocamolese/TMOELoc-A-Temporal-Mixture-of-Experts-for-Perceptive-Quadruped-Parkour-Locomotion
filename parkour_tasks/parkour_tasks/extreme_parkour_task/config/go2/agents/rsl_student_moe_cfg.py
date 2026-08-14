@@ -123,4 +123,22 @@ class UnitreeGo2ParkourStudentMoERiskPPORunnerCfg(UnitreeGo2ParkourStudentMoEPPO
         # environment the head can memorise 192 values. The held-out probe is
         # the honest measure, and it is what these indices follow.
         dyn_dims=[0, 1, 2],
+        # Cut the auxiliary budget. The head-to-head is what motivates this: the
+        # baseline has two loss terms, spends everything on imitation and reaches
+        # an action loss of 0.690, while this student spends 36% of its objective
+        # there and sits at 1.316 on the same quantity and the same target -- and
+        # loses by 2.8 sigma on pace and 3.4 sigma on falls.
+        #
+        # The auxiliary heads exist because c_t is a unified context that nothing
+        # else would ground. The baseline shows that grounding is available for
+        # free: its depth latent occupies the slot the teacher fills with its
+        # scandots encoding, so the action loss shapes it implicitly, and it ends
+        # closer to the teacher than our explicitly supervised context does.
+        #
+        # Cut rather than removed. Zeroing the context costs 12.2 goals per
+        # env-minute and quadruples the falls, so c_t is load-bearing and worth
+        # keeping supervised -- just not at a third of the objective. At these
+        # weights the action share goes from 36% to about 55%.
+        coef_dyn=1.0,
+        coef_terrain=1.0,
     )
