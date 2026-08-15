@@ -177,3 +177,43 @@ class UnitreeGo2ParkourStudentMoEWarmPPORunnerCfg(UnitreeGo2ParkourStudentMoERis
         coef_terrain=1.0,
         warm_start_experts=True,
     )
+
+
+@configclass
+class UnitreeGo2ParkourStudentMoEDensePPORunnerCfg(UnitreeGo2ParkourStudentMoEPPORunnerCfg):
+    """The mixture trained soft from the start, rather than switched at the end.
+
+    Two measurements motivate dropping top-k. Run on the distilled weights at
+    inference, soft routing over all four experts is worth +2.77 +- 0.67 goals per
+    environment-minute -- four times the sweep's resolution floor -- at a fall cost
+    of +0.070 +- 0.042, which sits on the floor. And in this implementation it is
+    free: FusedExperts already evaluates every expert on every step and then
+    weights them, so top-2 was zeroing two contributions it had already paid for.
+    Sparsity was buying no compute here, only a constraint.
+
+    Weights trained under top-2 still carry its imprint -- experts 1 and 3 ended
+    at mean gate weight 0.09 and 0.14 precisely because they rarely made the cut --
+    so the honest version of the experiment trains dense from the start instead of
+    flipping a switch over a model shaped by a different regime.
+
+    CTS-MoE (arXiv 2606.19633) makes the same choice for perceptive locomotion,
+    reasoning that locomotion tasks share enough structure that combining experts
+    beats selecting one.
+
+    Note that the load-balancing loss changes form under dense routing: the Switch
+    formulation has identically zero gradient there. See MoEActor.
+    """
+
+    experiment_name = "unitree_go2_parkour_moe_dense"
+    run_name = "moe_transformer_dense"
+
+    depth_encoder = ParkourRslRlTemporalMoECfg(
+        learning_rate=1e-3,
+        num_steps_per_env=24 * 5,
+        # top_k == num_experts is soft routing
+        top_k=4,
+        # Everything else stays at the first run's settings, so this differs from
+        # the published comparison in routing alone. The auxiliary budget is NOT
+        # cut here: that change was tested on its own and lost by 2.2 sigma on
+        # both axes at iteration 4000.
+    )

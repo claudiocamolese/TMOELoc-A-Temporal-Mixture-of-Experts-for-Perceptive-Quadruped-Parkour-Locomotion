@@ -199,11 +199,29 @@ class MoEActor(nn.Module):
     # ------------------------------------------------------------ aux losses
 
     def load_balancing_loss(self) -> torch.Tensor:
-        """Switch-Transformer style auxiliary loss (Fedus et al., 2021)."""
+        """Keep the router from collapsing onto a subset of the experts.
+
+        Two forms, because the Switch one silently dies under soft routing.
+
+        Sparse (top_k < num_experts): the Switch-Transformer loss (Fedus et al.,
+        2021), ``K * sum(dispatch_fraction * mean_prob)``, ranging over [1, K].
+
+        Dense (top_k == num_experts): every expert is dispatched to on every
+        sample, so the dispatch fraction is identically 1, the Switch loss
+        reduces to ``K * sum(mean_prob) = K`` and its gradient is exactly zero --
+        measured at 1e-8 against 1.8e-2 for the sparse case. That would leave a
+        dense run with no protection against the gate collapse that killed an
+        earlier one at iteration 1020. The importance loss of Shazeer et al.
+        (2017) replaces it: ``K * sum(mean_prob^2)``, which is 1 when the average
+        gate is uniform and K when it has collapsed onto one expert, and which
+        keeps a gradient because it is quadratic in the probabilities.
+        """
         if self.probs is None:
             return torch.zeros((), device=next(self.parameters()).device)
-        fraction = (self.gates > 0).float().mean(dim=0)  # dispatch fraction per expert
         mean_prob = self.probs.mean(dim=0)
+        if self.top_k >= self.num_experts:
+            return self.num_experts * torch.sum(mean_prob.pow(2))
+        fraction = (self.gates > 0).float().mean(dim=0)  # dispatch fraction per expert
         return self.num_experts * torch.sum(fraction.detach() * mean_prob)
 
     def routing_smoothness_loss(self) -> torch.Tensor:
