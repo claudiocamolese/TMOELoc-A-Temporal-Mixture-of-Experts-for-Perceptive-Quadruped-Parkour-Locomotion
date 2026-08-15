@@ -124,3 +124,18 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
                 sub_terrain.proportion = 0.25
                 sub_terrain.noise_range = (0.02, 0.02)
 
+
+
+@configclass
+class UnitreeGo2StudentParkourEnvCfg_FT(UnitreeGo2StudentParkourEnvCfg):
+    """Distillation environment, but with the task reward switched back on.
+
+    The distillation configs strip the rewards to a single term at weight -0.,
+    because supervised distillation never reads them. PPO fine-tuning does, and
+    the reward is the only signal in this project that penalises falling over --
+    which is the whole of the remaining gap to the teacher. Everything else is
+    inherited unchanged so the fine-tuned policy is still scored on the terrain
+    and randomisation it was distilled on.
+    """
+
+    rewards: TeacherRewardsCfg = TeacherRewardsCfg()

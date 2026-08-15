@@ -177,9 +177,17 @@ class MoEActor(nn.Module):
         context: torch.Tensor,
         vel: torch.Tensor | None = None,
         update_routing: bool = False,
+        route_u: torch.Tensor | None = None,
     ) -> torch.Tensor:
         u = self.build_input(proprioception, context, vel)
-        if update_routing or self.gates is None:
+        if route_u is not None:
+            # Replay: the gates are recomputed from the input that actually set
+            # them during the rollout, not from this step's input. Routing is
+            # refreshed at the perception rate and cached in between, so
+            # recomputing it from the acting input would produce a different
+            # mixture and, in a PPO update, a wrong probability ratio.
+            self.update_routing(route_u)
+        elif update_routing or self.gates is None:
             self.update_routing(u)
 
         # With K=4 experts on a few hundred environments, evaluating every expert
