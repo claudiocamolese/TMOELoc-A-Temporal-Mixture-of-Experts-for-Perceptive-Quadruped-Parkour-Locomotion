@@ -217,3 +217,24 @@ class UnitreeGo2ParkourStudentMoEDensePPORunnerCfg(UnitreeGo2ParkourStudentMoEPP
         # cut here: that change was tested on its own and lost by 2.2 sigma on
         # both axes at iteration 4000.
     )
+
+
+@configclass
+class UnitreeGo2ParkourStudentMoEDenseWarmPPORunnerCfg(UnitreeGo2ParkourStudentMoEDensePPORunnerCfg):
+    """Dense routing plus the warm-started actor.
+
+    Selected over the plain dense variant only if the warm start proves itself at
+    iteration 4000 against the original run. Keeping the two as separate task ids
+    rather than a flag rewritten by a script means the decision is recorded in
+    what was launched, not in a file that has since changed.
+    """
+
+    experiment_name = "unitree_go2_parkour_moe_dense_warm"
+    run_name = "moe_transformer_dense_warm"
+
+    depth_encoder = ParkourRslRlTemporalMoECfg(
+        learning_rate=1e-3,
+        num_steps_per_env=24 * 5,
+        top_k=4,
+        warm_start_experts=True,
+    )
