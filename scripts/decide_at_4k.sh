@@ -45,9 +45,13 @@ OUT=logs/decide_4k; mkdir -p "$OUT"
 log "risk: $RISK_CKPT"
 log "moe : $MOE_CKPT"
 
-TASK=Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-Eval-v0
-for pair in "risk4k:$RISK_CKPT" "moe4k:$MOE_CKPT"; do
-  tag=${pair%%:*}; ck=${pair#*:}
+# Each checkpoint must be evaluated under the config it was trained with.
+# Loading the risk checkpoint into the plain MoE config fails outright -- the
+# risk head is an unexpected key and dyn_head is [3,64] against [5,64] -- and
+# that failure is what produced the empty verdict the first time.
+for pair in "risk4k:$RISK_CKPT:Isaac-Extreme-Parkour-StudentMoERisk-Unitree-Go2-Eval-v0" \
+            "moe4k:$MOE_CKPT:Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-Eval-v0"; do
+  tag=${pair%%:*}; rest=${pair#*:}; ck=${rest%%:*}; TASK=${rest#*:}
   log "eval $tag"
   nice -n 10 timeout -k 60 3600 "$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py \
     --task "$TASK" --checkpoint "$ck" --num_envs "$ENVS" --steps "$STEPS" \
@@ -82,14 +86,23 @@ PY
 2>>"$LOG")
 log "VERDICT: $VERDICT"
 
-if [ "$VERDICT" = "KEEP" ]; then
-  log "keeping the failure-aware run; nothing else to do."
+# Fail SAFE, not open. The first version treated anything that was not
+# literally KEEP as a licence to switch, so when the comparison errored it
+# killed a healthy run on no evidence at all. Only an explicit SWITCH may
+# terminate anything.
+if [ "$VERDICT" != "SWITCH" ]; then
+  log "verdict is '$VERDICT' -- not an explicit SWITCH, so nothing is killed."
+  [ "$VERDICT" = "KEEP" ] && log "keeping the failure-aware run." \
+                          || log "ALERT: the comparison did not produce a verdict; needs a human."
   exit 0
 fi
 
 log "switching to the warm-started variant"
-pkill -f "python.*train\.py.*StudentMoERisk" 2>/dev/null
-pkill -f "watchdog_risk.sh" 2>/dev/null
+# -9 on purpose: Isaac Sim ignores SIGTERM, so a plain pkill leaves the run
+# alive, and two 192-environment simulators then share 32.6 GB with 0.7 GB to
+# spare. Measured: that is exactly what happened on the first attempt.
+pkill -9 -f "python.*train\.py.*StudentMoERisk" 2>/dev/null
+pkill -9 -f "bash.*watchdog_risk.sh" 2>/dev/null
 sleep 45
 setsid nohup "$PYTHON_BIN" scripts/rsl_rl/train.py \
   --task Isaac-Extreme-Parkour-StudentMoEWarm-Unitree-Go2-v0 \
