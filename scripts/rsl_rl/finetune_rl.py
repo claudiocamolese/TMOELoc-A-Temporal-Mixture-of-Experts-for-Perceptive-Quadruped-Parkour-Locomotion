@@ -314,7 +314,7 @@ def main(env_cfg, agent_cfg):
     cur_len = torch.zeros(N, device=device)
 
     for it in range(args_cli.max_iterations):
-        U, UR, O, A, LP, V, R, D, MU, SG = [], [], [], [], [], [], [], [], [], []
+        U, UR, O, A, LP, V, R, D, TO, MU, SG = [], [], [], [], [], [], [], [], [], [], []
         route_u = None
         t0 = time.time()
 
@@ -353,7 +353,25 @@ def main(env_cfg, agent_cfg):
                 obs, rew, dones = obs.to(device), rew.to(device), dones.to(device)
                 depth = extras["observations"]["depth_camera"].to(device)
                 policy.reset(dones)
+                # Every termination in this environment is flagged time_out=True:
+                # terminate_episode merges falls, timeouts and *reaching the final
+                # goal* into one DoneTerm carrying that flag. Treating them all as
+                # terminal states with zero future value teaches the critic that
+                # finishing a course is worth nothing, and PPO then learns not to
+                # finish -- which is exactly what was measured, a policy moving
+                # less and less while its episodes grew longer.
+                #
+                # Bootstrap through them as rsl-rl does, by crediting the value of
+                # the state the action was taken in. That is also how the teacher
+                # this policy came from was trained.
+                timeouts = extras.get("time_outs")
+                if timeouts is not None:
+                    to = timeouts.to(device).float()
+                    rew = rew + args_cli.gamma * V[-1] * to
+                else:
+                    to = torch.zeros_like(rew)
                 R.append(rew)
+                TO.append(to)
                 D.append(dones.float())
 
                 cur_rew += rew
@@ -375,6 +393,9 @@ def main(env_cfg, agent_cfg):
         gae = torch.zeros(N, device=device)
         for t in reversed(range(T)):
             nxt = last_v if t == T - 1 else V[t + 1]
+            # D marks the end of a trajectory segment, so the GAE recursion still
+            # stops there; the truncation credit above is what replaces the value
+            # that would otherwise be lost.
             delta = R[t] + args_cli.gamma * nxt * (1.0 - D[t]) - V[t]
             gae = delta + args_cli.gamma * args_cli.lam * (1.0 - D[t]) * gae
             adv[t] = gae
