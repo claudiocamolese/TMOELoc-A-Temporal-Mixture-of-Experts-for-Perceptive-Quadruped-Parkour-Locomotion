@@ -248,10 +248,19 @@ def main(env_cfg, agent_cfg):
     critic = Critic(obs.shape[1]).to(device)
     critic.load_from_teacher(runner.alg.policy)
 
-    params = actor.parameters + [log_std] + list(critic.parameters())
+    # Two optimisers, not one. Sharing a single gradient-norm clip couples them:
+    # the value loss reaches 4.07 against a surrogate of ~0.01, so the critic's
+    # gradient dominates the total norm and the clip rescales the actor by however
+    # wrong the critic happens to be on that batch. The actor's step then stops
+    # being governed by its own learning rate, which is what the adaptive rule is
+    # trying to control -- measured as a KL oscillating between the 1e-5 floor and
+    # the 1e-3 ceiling rather than settling.
+    actor_params = actor.parameters + [log_std]
     if args_cli.unfreeze_encoder:
-        params += list(policy.depth_encoder.parameters())
-    opt = optim.Adam(params, lr=args_cli.lr)
+        actor_params += list(policy.depth_encoder.parameters())
+    critic_params = list(critic.parameters())
+    opt = optim.Adam(actor_params, lr=args_cli.lr)
+    opt_critic = optim.Adam(critic_params, lr=1.0e-3)
     lr = args_cli.lr
 
     log_dir = args_cli.log_dir or os.path.join(
@@ -429,14 +438,17 @@ def main(env_cfg, agent_cfg):
                 # is regressed on the returns here.
                 value_loss = (critic(Of[sel]) - retf[sel]).pow(2).mean()
                 entropy = dist.entropy().sum(-1).mean()
-                loss = surrogate + 1.0 * value_loss - args_cli.entropy_coef * entropy
+                actor_loss = surrogate - args_cli.entropy_coef * entropy
                 if policy.is_moe and args_cli.balance_coef > 0.0:
-                    loss = loss + args_cli.balance_coef * policy.depth_actor.load_balancing_loss()
+                    actor_loss = actor_loss + args_cli.balance_coef * policy.depth_actor.load_balancing_loss()
 
                 opt.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(params, 1.0)
+                opt_critic.zero_grad()
+                (actor_loss + value_loss).backward()
+                nn.utils.clip_grad_norm_(actor_params, 1.0)
+                nn.utils.clip_grad_norm_(critic_params, 1.0)
                 opt.step()
+                opt_critic.step()
 
                 with torch.no_grad():
                     # analytic KL between the sampling policy and the updated one,
@@ -455,7 +467,9 @@ def main(env_cfg, agent_cfg):
                 if kl > 2.0 * args_cli.kl_target:
                     lr = max(1e-5, lr / 1.5)
                 elif kl < 0.5 * args_cli.kl_target and kl > 0.0:
-                    lr = min(1e-3, lr * 1.5)
+                    # 1e-3 was high enough that one rise produced a KL spike and an
+                    # immediate crash back to the floor; the rate never settled
+                    lr = min(3e-4, lr * 1.5)
                 for g in opt.param_groups:
                     g["lr"] = lr
 
