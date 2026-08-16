@@ -22,6 +22,17 @@ cd "$(dirname "$0")/.."
 source scripts/launch_env.sh
 LOG=logs/rl2.log
 ITERS=20000
+# Measured over the first 800 iterations of the discarded attempt: the sampled KL
+# sat at 0.08 and 0.04 against a target of 0.02, so the adaptive rule halved the
+# learning rate to its 1e-5 floor and left it there for ~78% of the run. PPO was
+# not optimising. The KL is cumulative over epochs x minibatches gradient steps,
+# so halving the epochs halves the drift and lets the rate climb on its own.
+EPOCHS=2
+# 0.5 of Gaussian noise on top of a distilled policy is itself expensive here:
+# action_rate and dof_acc penalise exactly the jerk it introduces, and the reward
+# was falling (-2.9 and -4.4 per 1000 iterations) while episode length rose --
+# the policy was being pushed towards standing still rather than learning.
+NOISE=0.25
 log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 free_mb(){ echo $(( $(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits) \
                   - $(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) )); }
@@ -35,6 +46,7 @@ log "checkpoint: $TOP2  (free $(free_mb) MiB)"
 setsid "$PYTHON_BIN" scripts/rsl_rl/finetune_rl.py \
   --task Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-FT-v0 \
   --checkpoint "$TOP2" --num_envs 192 --max_iterations "$ITERS" \
+  --epochs "$EPOCHS" --init_noise_std "$NOISE" \
   --run_name top2_ft --headless >> logs/run_console/ft_top2.log 2>&1
 log "arm B exit $?"
 
@@ -47,6 +59,7 @@ if [ -f "$BASE" ]; then
   setsid "$PYTHON_BIN" scripts/rsl_rl/finetune_rl.py \
     --task Isaac-Extreme-Parkour-Student-Unitree-Go2-FT-v0 \
     --checkpoint "$BASE" --num_envs 192 --max_iterations "$ITERS" \
+    --epochs "$EPOCHS" --init_noise_std "$NOISE" \
     --run_name base_ft --headless >> logs/run_console/ft_base.log 2>&1
   log "arm C exit $?"
 else
