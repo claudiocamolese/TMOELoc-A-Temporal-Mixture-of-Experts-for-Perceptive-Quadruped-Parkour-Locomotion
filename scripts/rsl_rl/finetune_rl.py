@@ -254,6 +254,35 @@ def main(env_cfg, agent_cfg):
     os.makedirs(log_dir, exist_ok=True)
     print(f"[INFO]: logging to {log_dir}")
 
+    # Same project as the distillation runs, so the fine-tuning curves sit beside
+    # the runs they start from rather than in a separate place.
+    run = None
+    try:
+        import wandb
+        run = wandb.init(
+            project=getattr(agent_cfg, "wandb_project", "parkour-moe-transformer"),
+            name=os.path.basename(log_dir),
+            dir=log_dir,
+            config={
+                "stage": "rl_finetune",
+                "checkpoint": args_cli.checkpoint,
+                "task": args_cli.task,
+                "num_envs": args_cli.num_envs,
+                "max_iterations": args_cli.max_iterations,
+                "steps_per_env": args_cli.steps_per_env,
+                "lr": args_cli.lr,
+                "init_noise_std": args_cli.init_noise_std,
+                "entropy_coef": args_cli.entropy_coef,
+                "kl_target": args_cli.kl_target,
+                "top_k": args_cli.top_k,
+                "balance_coef": args_cli.balance_coef,
+                "unfreeze_encoder": args_cli.unfreeze_encoder,
+            },
+        )
+        print(f"[INFO]: wandb run {run.name}")
+    except Exception as e:
+        print(f"[WARN]: wandb unavailable ({e}); continuing with console logging only")
+
     T, N = args_cli.steps_per_env, env.num_envs
     rew_buf, len_buf = deque(maxlen=100), deque(maxlen=100)
     last_routing: dict = {}
@@ -400,6 +429,23 @@ def main(env_cfg, agent_cfg):
         k = max(stats["n"], 1)
         mean_kl = stats["kl"] / k
 
+        if run is not None:
+            payload = {
+                "ft/reward": statistics.mean(rew_buf) if rew_buf else float("nan"),
+                "ft/episode_length": statistics.mean(len_buf) if len_buf else float("nan"),
+                "ft/surrogate": stats["surrogate"] / k,
+                "ft/value_loss": stats["value"] / k,
+                "ft/entropy": stats["entropy"] / k,
+                "ft/kl": mean_kl,
+                "ft/lr": lr,
+                "ft/action_std": log_std.exp().mean().item(),
+                "ft/steps_per_s": T * N / (time.time() - t0),
+            }
+            if policy.is_moe and last_routing:
+                payload["ft/routing_perplexity"] = last_routing.get("routing_perplexity", float("nan"))
+                payload["ft/routing_entropy"] = last_routing.get("routing_entropy", float("nan"))
+            run.log(payload, step=it)
+
         if it % 10 == 0 or it == args_cli.max_iterations - 1:
             r = statistics.mean(rew_buf) if rew_buf else float("nan")
             L = statistics.mean(len_buf) if len_buf else float("nan")
@@ -427,6 +473,8 @@ def main(env_cfg, agent_cfg):
             )
 
     env.close()
+    if run is not None:
+        run.finish()
 
 
 if __name__ == "__main__":
