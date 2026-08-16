@@ -235,6 +235,66 @@ $PYTHON_BIN scripts/rsl_rl/train.py \
 - **A longer temporal window.** Untested, now lower priority: the model uses
   300 ms of the 700 ms it already has.
 
+
+## The RL fine-tuning stage: tried, and it does not work here
+
+The literature is unanimous that supervised distillation is not the last stage --
+Rudin et al. report 40-60% success after distillation rising to 80-95% after PPO
+on the task reward -- and both of our students plateau exactly as that predicts.
+So the stage was built and run. It destroys the policy.
+
+| checkpoint | pace | fall hazard | courses/env-min |
+|---|---|---|---|
+| distilled, at the start of fine-tuning | **24.25** | **0.34** | **1.78** |
+| after 200 policy updates | 14.03 | 1.08 | 0.16 |
+| after 2200 policy updates | 10.94 | 1.49 | 0.03 |
+
+Terrain level fell from 3.19 to 0.60 over the same span: the curriculum was
+demoting environments because the policy was failing them.
+
+This is not left standing on a first attempt. Five defects were found and fixed
+first, and the run above has all of them corrected:
+
+  - the truncation bootstrap. Falls, timeouts and *completing the course* share
+    one DoneTerm flagged time_out=True, so treating every done as terminal taught
+    the critic that finishing is worth nothing.
+  - the reward statistic, which I had contaminated with the bootstrap credit.
+  - actor and critic sharing one optimiser and one gradient clip, so the actor's
+    step was scaled by the critic's error rather than by its own learning rate.
+  - the KL target, which is not independent of the exploration noise: the
+    Gaussian KL carries (mu_old-mu_new)^2 / 2*sigma^2, so halving sigma
+    quadruples the KL reported for an identical step.
+  - the gate replay. The mixture caches its gates at the perception rate and
+    reset() forces them uniform after a termination, where they stay for up to
+    four control steps; the replay recomputed the router's own gates instead, so
+    the probability ratio was wrong for those samples. Under 1% of the batch, but
+    the KL is a mean and each carried an enormous one -- enough on its own to pin
+    the adaptive learning rate to its floor.
+
+The last of those was found by an invariant, not by tuning: adding a critic
+warmup phase freezes the actor, and with the actor frozen the sampled KL must be
+zero by construction. It read 0.14. Five rounds of tuning on epochs, noise, KL
+target and learning-rate ceiling had been aimed at the symptom that invariant
+located in a single run.
+
+With all five fixed and the KL invariant reading 0.0000, the learning rate
+adapting normally at 3e-4 and the KL at 0.01-0.065 against a target of 0.08, PPO
+still degrades the policy monotonically. The implementation now satisfies its own
+checks, so the explanation is the objective rather than the code.
+
+The reward has two positive terms against twelve penalties, with collision at -10
+applied continuously. A distilled parkour policy is fast and committed: it earns
+the tracking term and pays for the contacts, the action rate and the joint
+accelerations that come with moving quickly. PPO finds it locally profitable to
+move less. Reward stayed in the same range throughout while pace halved, which is
+what misalignment between an objective and a metric looks like from the inside.
+
+That reward was designed to train a policy from scratch alongside a curriculum,
+not to refine one that is already competent. Using it unchanged to fine-tune a
+distilled student is the part that does not transfer, and it is worth saying
+plainly because the literature result that motivated the stage does not mention
+it.
+
 ## Caveats
 
 - The recipe is a hypothesis backed by diagnosis, **not a measured win**.
