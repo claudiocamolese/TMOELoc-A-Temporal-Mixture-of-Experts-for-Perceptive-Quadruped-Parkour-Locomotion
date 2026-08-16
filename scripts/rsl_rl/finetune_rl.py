@@ -364,6 +364,7 @@ def main(env_cfg, agent_cfg):
                 # Bootstrap through them as rsl-rl does, by crediting the value of
                 # the state the action was taken in. That is also how the teacher
                 # this policy came from was trained.
+                raw_rew = rew.clone()   # what the environment actually paid
                 timeouts = extras.get("time_outs")
                 if timeouts is not None:
                     to = timeouts.to(device).float()
@@ -374,7 +375,10 @@ def main(env_cfg, agent_cfg):
                 TO.append(to)
                 D.append(dones.float())
 
-                cur_rew += rew
+                # the credit above belongs in the return, not in the statistic:
+                # accumulating it here would report a reward the environment never
+                # paid, rising with the value function rather than with the policy
+                cur_rew += raw_rew
                 cur_len += 1
                 fin = dones.bool()
                 if fin.any():
