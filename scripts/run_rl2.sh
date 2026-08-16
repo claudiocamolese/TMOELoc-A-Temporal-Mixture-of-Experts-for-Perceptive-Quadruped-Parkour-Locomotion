@@ -32,7 +32,7 @@ EPOCHS=2
 # action_rate and dof_acc penalise exactly the jerk it introduces, and the reward
 # was falling (-2.9 and -4.4 per 1000 iterations) while episode length rose --
 # the policy was being pushed towards standing still rather than learning.
-NOISE=0.25
+NOISE=0.25   # kl_target is derived from this in finetune_rl.py
 log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 free_mb(){ echo $(( $(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits) \
                   - $(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) )); }

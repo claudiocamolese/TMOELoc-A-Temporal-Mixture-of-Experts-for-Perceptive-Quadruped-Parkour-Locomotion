@@ -61,10 +61,12 @@ parser.add_argument("--gamma", type=float, default=0.99)
 parser.add_argument("--lam", type=float, default=0.95)
 parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--minibatches", type=int, default=4)
-parser.add_argument("--kl_target", type=float, default=0.02,
-                    help="Measured over five epochs the sampled KL settles near 0.022, so a "
-                         "target of 0.01 pins the learning rate at its floor and stalls "
-                         "learning while the policy is still improving.")
+parser.add_argument("--kl_target", type=float, default=None,
+                    help="Left unset it is derived from the noise, because the two are not "
+                         "independent: the Gaussian KL carries a (mu_old-mu_new)^2 / 2*sigma^2 "
+                         "term, so halving sigma quadruples the KL reported for an identical "
+                         "step. A fixed target then pins the learning rate to its floor. The "
+                         "default is calibrated at sigma 0.5 and scaled by (0.5/sigma)^2.")
 parser.add_argument("--unfreeze_encoder", action="store_true", default=False)
 parser.add_argument("--top_k", type=int, default=None,
                     help="Override the mixture's top-k at the start of fine-tuning. "
@@ -84,6 +86,11 @@ args_cli, hydra_args = parser.parse_known_args()
 if not args_cli.checkpoint:
     parser.error("--checkpoint is required: fine-tuning starts from a distilled policy")
 sys.argv = [sys.argv[0]] + hydra_args
+
+if args_cli.kl_target is None:
+    args_cli.kl_target = 0.02 * (0.5 / max(args_cli.init_noise_std, 1e-6)) ** 2
+    print(f"[INFO]: kl_target derived from noise {args_cli.init_noise_std}: "
+          f"{args_cli.kl_target:.4f}")
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -283,6 +290,23 @@ def main(env_cfg, agent_cfg):
     except Exception as e:
         print(f"[WARN]: wandb unavailable ({e}); continuing with console logging only")
 
+    # The FT config inherits the training curriculum, so terrain difficulty rises
+    # during the run. Without logging it, a falling reward cannot be told apart
+    # from the same policy being asked to do something harder.
+    try:
+        parkour_term = env.unwrapped.parkour_manager.get_term("base_parkour")
+    except Exception:
+        parkour_term = None
+
+    def terrain_level() -> float:
+        # the parkour term keeps it in its metrics dict, not as an attribute
+        if parkour_term is None:
+            return float("nan")
+        try:
+            return float(parkour_term.metrics["terrain_levels"].float().mean())
+        except Exception:
+            return float("nan")
+
     T, N = args_cli.steps_per_env, env.num_envs
     rew_buf, len_buf = deque(maxlen=100), deque(maxlen=100)
     last_routing: dict = {}
@@ -440,6 +464,7 @@ def main(env_cfg, agent_cfg):
                 "ft/lr": lr,
                 "ft/action_std": log_std.exp().mean().item(),
                 "ft/steps_per_s": T * N / (time.time() - t0),
+                "ft/terrain_level": terrain_level(),
             }
             if policy.is_moe and last_routing:
                 payload["ft/routing_perplexity"] = last_routing.get("routing_perplexity", float("nan"))
@@ -455,7 +480,9 @@ def main(env_cfg, agent_cfg):
             print(f"it {it:5d} | reward {r:8.3f} | ep_len {L:7.1f} | "
                   f"surrogate {stats['surrogate'] / k:+.4f} | value {stats['value'] / k:7.3f} | "
                   f"kl {mean_kl:.4f} | lr {lr:.2e} | std {log_std.exp().mean().item():.3f} | "
-                  f"{T * N / (time.time() - t0):.0f} steps/s" + rt, flush=True)
+                  f"{T * N / (time.time() - t0):.0f} steps/s" + rt
+                  + (f" | lvl {terrain_level():.2f}" if parkour_term is not None else ""),
+                  flush=True)
 
         if it % args_cli.save_interval == 0 or it == args_cli.max_iterations - 1:
             torch.save(
