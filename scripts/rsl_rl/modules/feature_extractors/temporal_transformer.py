@@ -162,6 +162,22 @@ class TemporalContextEncoder(nn.Module):
         self.prop_buffer = torch.zeros(0, self.prop_window, self.num_prop)
         self.token_buffer = torch.zeros(0, self.history_len, self.d_model)
         self._initialised = False
+        # The depth camera runs at 10 Hz and the controller at 50 Hz. With the
+        # context refreshed only on perception steps, the actor spends four
+        # control steps out of five with a context up to 80 ms stale and no other
+        # temporal information at all -- its own input is a single 53-dim
+        # proprioception frame, where the GRU baseline's actor reads a 530-dim
+        # proprioceptive history every step. A fall develops in 100-200 ms, so
+        # that staleness is a large fraction of the timescale to react on.
+        #
+        # At "control" rate the visual latent stays on the camera's clock, cached
+        # between frames, while the proprioceptive branch, the fusion and the
+        # transformer recompute every control step. The window still spans 0.8 s:
+        # the seven older tokens stay at 10 Hz and only the newest is live.
+        # History at the camera's rate, present at the controller's.
+        self.context_rate = depth_cfg.get("context_rate", "perception")
+        self.depth_latent_cache: torch.Tensor | None = None
+
         # attention probe, off during training (need_weights costs a softmax copy)
         self.capture_attention = False
         self.last_attention: torch.Tensor | None = None
@@ -180,6 +196,9 @@ class TemporalContextEncoder(nn.Module):
             self.prop_buffer = proprioception.detach().unsqueeze(1).repeat(1, self.prop_window, 1)
             return
         self.prop_buffer = torch.cat([self.prop_buffer[:, 1:], proprioception.detach().unsqueeze(1)], dim=1)
+
+    def reset_depth_cache(self) -> None:
+        self.depth_latent_cache = None
 
     def reset(self, dones: torch.Tensor | None = None) -> None:
         """Clear temporal state for terminated environments.
@@ -213,10 +232,31 @@ class TemporalContextEncoder(nn.Module):
         z_p = self.prop_encoder(window.reshape(window.shape[0], -1))
         return self.token_proj(torch.cat([z_v, z_p], dim=-1))
 
-    def forward(self, depth_image: torch.Tensor, proprioception: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Advance the temporal window by one depth frame and return the context."""
-        token = self.encode_token(depth_image, proprioception)
-        self.token_buffer = torch.cat([self.token_buffer[:, 1:], token.unsqueeze(1)], dim=1)
+    def forward(
+        self,
+        depth_image: torch.Tensor,
+        proprioception: torch.Tensor,
+        is_perception_step: bool = True,
+    ) -> dict[str, torch.Tensor]:
+        """Return the context, advancing the 10 Hz window only on a new frame."""
+        if not self._initialised:
+            self._lazy_init(depth_image.shape[0], depth_image.device)
+            self.prop_buffer = proprioception.detach().unsqueeze(1).repeat(1, self.prop_window, 1)
+
+        fresh_frame = is_perception_step or self.depth_latent_cache is None
+        if fresh_frame:
+            self.depth_latent_cache = self.depth_backbone(depth_image)
+
+        window = torch.cat([self.prop_buffer[:, 1:], proprioception.unsqueeze(1)], dim=1)
+        z_p = self.prop_encoder(window.reshape(window.shape[0], -1))
+        token = self.token_proj(torch.cat([self.depth_latent_cache, z_p], dim=-1))
+
+        if fresh_frame:
+            # commit: the previous live token becomes history, this one is live
+            self.token_buffer = torch.cat([self.token_buffer[:, 1:], token.unsqueeze(1)], dim=1)
+        else:
+            # refresh the live slot in place, leaving the 10 Hz history untouched
+            self.token_buffer = torch.cat([self.token_buffer[:, :-1], token.unsqueeze(1)], dim=1)
 
         x = self.token_buffer + self.pos_embedding
         for block in self.blocks:

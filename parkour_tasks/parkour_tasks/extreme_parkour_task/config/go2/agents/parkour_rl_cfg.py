@@ -149,6 +149,19 @@ class ParkourRslRlTemporalMoECfg(ParkourRslRlBaseCfg):
     # action loss
     risk_weight_warmup: int = 2000
 
+    # -- how often the context is recomputed
+    #
+    # "perception" refreshes it with each depth frame at 10 Hz, so on four control
+    # steps out of five the actor works from a context up to 80 ms stale plus a
+    # single 53-dim proprioception frame -- where the GRU baseline's actor reads a
+    # 530-dim proprioceptive history every step. A fall develops in 100-200 ms.
+    #
+    # "control" keeps the CNN on the camera's clock and caches its latent, while
+    # the proprioceptive branch, the fusion and the transformer recompute every
+    # control step. The window still spans 0.8 s: the seven older tokens stay at
+    # 10 Hz and only the newest is live.
+    context_rate: str = "perception"   # "perception" | "control"
+
     # -- expert warm start (off by default)
     #
     # The GRU baseline copies the teacher's actor into its student and starts

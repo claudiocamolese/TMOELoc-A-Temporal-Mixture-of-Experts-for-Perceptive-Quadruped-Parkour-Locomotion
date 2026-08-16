@@ -238,3 +238,30 @@ class UnitreeGo2ParkourStudentMoEDenseWarmPPORunnerCfg(UnitreeGo2ParkourStudentM
         top_k=4,
         warm_start_experts=True,
     )
+
+
+@configclass
+class UnitreeGo2ParkourStudentMoEFastPPORunnerCfg(UnitreeGo2ParkourStudentMoEDensePPORunnerCfg):
+    """Dense routing, with the context recomputed at the control rate.
+
+    The asymmetry this addresses was found late and never tested: the GRU
+    baseline's actor reads the full 530-dim proprioceptive history on every
+    control step, while the mixture's experts read 53 dims of current
+    proprioception plus a context refreshed only when a depth frame arrives. Four
+    steps out of five the mixture has no temporal information at all, and a fall
+    develops in 100-200 ms.
+
+    The camera stays at 10 Hz -- that is physical -- so the visual latent is
+    cached and only the proprioceptive branch, the fusion and the transformer
+    recompute at 50 Hz. The window still spans 0.8 s.
+    """
+
+    experiment_name = "unitree_go2_parkour_moe_fast"
+    run_name = "moe_transformer_fast"
+
+    depth_encoder = ParkourRslRlTemporalMoECfg(
+        learning_rate=1e-3,
+        num_steps_per_env=24 * 5,
+        top_k=4,
+        context_rate="control",
+    )

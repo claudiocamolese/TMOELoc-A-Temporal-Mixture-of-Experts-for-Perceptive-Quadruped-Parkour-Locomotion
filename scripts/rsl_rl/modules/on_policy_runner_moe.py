@@ -130,11 +130,23 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                     prop_ctx[:, ENV_CLASS_SLICE] = 0.0
 
                 # ---- perception step: refresh the temporal context ----------
-                if is_perception_step or context is None:
-                    out = self.alg.depth_encoder(depth_image.clone(), prop_ctx)
+                # At control rate the encoder runs every step: the visual latent
+                # is cached on the camera's clock inside it, only the proprio
+                # branch and the transformer recompute.
+                ctrl_rate = self.alg.depth_encoder.context_rate == "control"
+                if ctrl_rate or is_perception_step or context is None:
+                    out = self.alg.depth_encoder(
+                        depth_image.clone(), prop_ctx, is_perception_step=is_perception_step
+                    )
                     context, vel_pred, yaw_pred = out["context"], out["vel"], out["yaw"]
                     risk_pred = out.get("risk")
 
+                # The auxiliary supervision stays on the perception clock even when
+                # the context runs at control rate. Its targets come from the
+                # teacher -- infer_scandots_latent is a full privileged forward --
+                # so sampling them five times as often would cost five times as
+                # much and silently reweight the objective against the action loss.
+                if is_perception_step or len(buffers["terrain"]) == 0:
                     with torch.no_grad():
                         z_scan_teacher = self.alg.policy.actor.infer_scandots_latent(obs)
                         vel_target = obs[:, priv_explicit_slice].detach()

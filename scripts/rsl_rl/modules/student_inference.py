@@ -203,8 +203,9 @@ class StudentPolicy:
             depth_image = torch.zeros_like(depth_image)
 
         if self.is_moe:
-            if is_perception_step or self.context is None:
-                out = self.depth_encoder(depth_image, prop_ctx)
+            ctrl_rate = getattr(self.depth_encoder, "context_rate", "perception") == "control"
+            if ctrl_rate or is_perception_step or self.context is None:
+                out = self.depth_encoder(depth_image, prop_ctx, is_perception_step=is_perception_step)
                 self.context = self._apply_ablation(out["context"])
                 if self.zero_context:
                     self.context = torch.zeros_like(self.context)

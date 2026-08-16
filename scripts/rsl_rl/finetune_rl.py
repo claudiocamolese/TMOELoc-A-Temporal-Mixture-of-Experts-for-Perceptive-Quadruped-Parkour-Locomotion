@@ -341,8 +341,11 @@ def main(env_cfg, agent_cfg):
             for _ in range(T):
                 is_perception = env.unwrapped.common_step_counter % 5 == 0
                 prop_ctx = policy._student_prop(obs, blank_yaw=True)
-                if is_perception or policy.context is None:
-                    out = policy.depth_encoder(depth.clone(), prop_ctx)
+                ctrl_rate = getattr(policy.depth_encoder, "context_rate", "perception") == "control"
+                if ctrl_rate or is_perception or policy.context is None:
+                    out = policy.depth_encoder(
+                        depth.clone(), prop_ctx, is_perception_step=is_perception
+                    )
                     policy.context, policy.vel_pred, policy.yaw_pred = (
                         out["context"], out["vel"], out["yaw"],
                     )
