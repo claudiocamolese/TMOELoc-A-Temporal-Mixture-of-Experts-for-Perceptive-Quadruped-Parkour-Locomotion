@@ -77,6 +77,13 @@ parser.add_argument("--top_k", type=int, default=None,
 parser.add_argument("--balance_coef", type=float, default=0.02,
                     help="Small load-balancing term. Distillation had one; PPO does not, and "
                          "without it nothing stops the gates collapsing onto one expert.")
+parser.add_argument("--critic_warmup", type=int, default=300,
+                    help="Iterations spent training only the value function, with the policy "
+                         "held fixed. The critic is seeded from the teacher's, which was fitted "
+                         "on the teacher's state distribution, not this student's; until it is "
+                         "refitted the advantages are noise, and PPO spends thousands of Adam "
+                         "steps on that noise. Measured without it: pace fell from 24.25 to 8.38 "
+                         "within 250 iterations.")
 parser.add_argument("--save_interval", type=int, default=250)
 # --run_name comes from cli_args.add_rsl_rl_args; do not redefine it
 parser.add_argument("--log_dir", type=str, default=None)
@@ -323,7 +330,10 @@ def main(env_cfg, agent_cfg):
     cur_len = torch.zeros(N, device=device)
 
     for it in range(args_cli.max_iterations):
-        U, UR, O, A, LP, V, R, D, TO, MU, SG = [], [], [], [], [], [], [], [], [], [], []
+        U, UR, O, A, LP, V, R, D, TO, MU, SG, OK = [], [], [], [], [], [], [], [], [], [], [], []
+        # gates stay uniform from a reset until the next perception step
+        # refreshes them, which is up to four control steps, not one
+        stale_gates = torch.zeros(N, dtype=torch.bool, device=device)
         route_u = None
         t0 = time.time()
 
@@ -349,6 +359,16 @@ def main(env_cfg, agent_cfg):
 
                 if policy.is_moe and is_perception:
                     last_routing = policy.depth_actor.routing_stats()
+                # A step taken straight after a termination acts on gates that
+                # reset() forced to uniform, and the replay cannot reproduce that:
+                # it recomputes the router's own gates from route_u. Those samples
+                # are a fraction of a percent of the batch, each carries an
+                # enormous KL, and the KL is a mean -- enough on their own to
+                # collapse the adaptive learning rate. Excluded rather than
+                # approximated.
+                if is_perception:
+                    stale_gates[:] = False   # the router has just recomputed them
+                OK.append(~stale_gates)
                 U.append(u)
                 UR.append(route_u)
                 O.append(obs.clone())   # privileged, for the critic replay
@@ -362,6 +382,7 @@ def main(env_cfg, agent_cfg):
                 obs, rew, dones = obs.to(device), rew.to(device), dones.to(device)
                 depth = extras["observations"]["depth_camera"].to(device)
                 policy.reset(dones)
+                stale_gates |= dones.bool()
                 # Every termination in this environment is flagged time_out=True:
                 # terminate_episode merges falls, timeouts and *reaching the final
                 # goal* into one DoneTerm carrying that flag. Treating them all as
@@ -400,7 +421,7 @@ def main(env_cfg, agent_cfg):
 
         # ---- GAE ---------------------------------------------------------
         U = torch.stack(U); O = torch.stack(O); A = torch.stack(A); LP = torch.stack(LP)
-        UR = torch.stack(UR); MU = torch.stack(MU); SG = torch.stack(SG)
+        UR = torch.stack(UR); MU = torch.stack(MU); SG = torch.stack(SG); OK = torch.stack(OK)
         V = torch.stack(V); R = torch.stack(R); D = torch.stack(D)
         adv = torch.zeros_like(R)
         gae = torch.zeros(N, device=device)
@@ -417,10 +438,15 @@ def main(env_cfg, agent_cfg):
 
         flat = lambda x: x.reshape(-1, *x.shape[2:])  # noqa: E731
         Uf, URf, Of, Af, LPf, advf, retf, MUf, SGf = map(flat, (U, UR, O, A, LP, adv, ret, MU, SG))
+        keep = flat(OK).nonzero(as_tuple=True)[0]
+        Uf, URf, Of, Af, LPf, advf, retf, MUf, SGf = (
+            x[keep] for x in (Uf, URf, Of, Af, LPf, advf, retf, MUf, SGf)
+        )
         n = Uf.shape[0]
         idx = torch.randperm(n, device=device)
         mb = n // args_cli.minibatches
 
+        warming = it < args_cli.critic_warmup
         stats = {"surrogate": 0.0, "value": 0.0, "entropy": 0.0, "kl": 0.0, "n": 0}
         for _ in range(args_cli.epochs):
             for k in range(args_cli.minibatches):
@@ -444,10 +470,11 @@ def main(env_cfg, agent_cfg):
 
                 opt.zero_grad()
                 opt_critic.zero_grad()
-                (actor_loss + value_loss).backward()
-                nn.utils.clip_grad_norm_(actor_params, 1.0)
+                (value_loss if warming else actor_loss + value_loss).backward()
+                if not warming:
+                    nn.utils.clip_grad_norm_(actor_params, 1.0)
+                    opt.step()
                 nn.utils.clip_grad_norm_(critic_params, 1.0)
-                opt.step()
                 opt_critic.step()
 
                 with torch.no_grad():
@@ -464,7 +491,9 @@ def main(env_cfg, agent_cfg):
                 # Averaging over all 20 gradient steps and adapting once per
                 # iteration measures cumulative drift instead of step size, which
                 # drove the rate to its floor and stopped learning outright.
-                if kl > 2.0 * args_cli.kl_target:
+                if warming:
+                    pass
+                elif kl > 2.0 * args_cli.kl_target:
                     lr = max(1e-5, lr / 1.5)
                 elif kl < 0.5 * args_cli.kl_target and kl > 0.0:
                     # 1e-3 was high enough that one rise produced a KL spike and an
@@ -518,7 +547,7 @@ def main(env_cfg, agent_cfg):
                 rt = f" | experts {last_routing.get('routing_perplexity', float('nan')):.2f}"
             print(f"it {it:5d} | reward {r:8.3f} | ep_len {L:7.1f} | "
                   f"surrogate {stats['surrogate'] / k:+.4f} | value {stats['value'] / k:7.3f} | "
-                  f"kl {mean_kl:.4f} | lr {lr:.2e} | std {log_std.exp().mean().item():.3f} | "
+                  f"kl {mean_kl:.4f} | lr {'warmup' if warming else f'{lr:.2e}'} | std {log_std.exp().mean().item():.3f} | "
                   f"{T * N / (time.time() - t0):.0f} steps/s" + rt
                   + (f" | lvl {terrain_level():.2f}" if parkour_term is not None else ""),
                   flush=True)
