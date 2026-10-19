@@ -12,15 +12,15 @@ ExpertParkour extends [Sangbaek Park's Isaaclab_Parkour](https://github.com/CAI2
 
 ## Policy in action
 
-The **distilled top-2 student at iteration 14,999**, from run `2026-08-12_12-16-19_moe_transformer`. Click an image to open its MP4 in GitHub's file viewer; each clip is 12 seconds. These are offline third-person reconstructions from recorded robot link poses and terrain samples, with routing diagnostics, rather than RTX camera recordings.
+The **distilled top-2 student at iteration 14,999**, from run `2026-08-12_12-16-19_moe_transformer`. The looping GIFs below show each complete 12-second clip directly in the README. Click a GIF to open the original MP4. These are offline third-person reconstructions from recorded robot link poses and terrain samples, with routing diagnostics, rather than RTX camera recordings.
 
 | Environment 1 | Environment 2 |
 | :---: | :---: |
-| [![Go2 parkour rollout, environment 1](docs/assets/rollout-env1.jpg)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env1.mp4) | [![Go2 parkour rollout, environment 2](docs/assets/rollout-env2.jpg)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env2.mp4) |
+| [![Go2 parkour rollout, environment 1](docs/assets/rollout-env1.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env1.mp4) | [![Go2 parkour rollout, environment 2](docs/assets/rollout-env2.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env2.mp4) |
 | **Environment 3** | **Environment 4** |
-| [![Go2 parkour rollout, environment 3](docs/assets/rollout-env3.jpg)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env3.mp4) | [![Go2 parkour rollout, environment 4](docs/assets/rollout-env4.jpg)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env4.mp4) |
+| [![Go2 parkour rollout, environment 3](docs/assets/rollout-env3.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env3.mp4) | [![Go2 parkour rollout, environment 4](docs/assets/rollout-env4.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env4.mp4) |
 
-[![Go2 parkour rollout, environment 6](docs/assets/rollout-env6.jpg)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env6.mp4)
+[![Go2 parkour rollout, environment 6](docs/assets/rollout-env6.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env6.mp4)
 
 **Environment 6** · [All recordings and rollout archive](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/)
 

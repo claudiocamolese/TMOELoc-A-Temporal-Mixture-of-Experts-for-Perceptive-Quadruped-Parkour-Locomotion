@@ -42,6 +42,8 @@ No other changes. Keep every label legible. Avoid serial expert arrows. Avoid ga
 Edit this scientific figure with ONLY these two text corrections. Preserve all geometry, art, colors, lines, arrows, panels and other labels exactly. 1. In the main student panel, the dashed prediction-head box currently says 'Context prediction heads (training only)'. Replace that ENTIRE heading with exactly 'Context prediction heads'. Do NOT retain '(training only)' because Heading is used at inference. 2. The top middle student input box currently says 'Current proprioception · 50 Hz'. Replace this heading with exactly 'Proprioception + velocity* · 50 Hz'. Keep '9-d explicit state' in that box. No other changes. English text must be exact and readable.
 ```
 
-## Video thumbnails
+## Rollout GIFs and thumbnails
 
-`rollout-env{1,2,3,4,6}.jpg` are FFmpeg frame extractions at 3 seconds from the corresponding committed `thirdperson_env*.mp4` files. They are clickable previews of recorded experiments, not generated locomotion imagery.
+`rollout-env{1,2,3,4,6}.gif` are FFmpeg conversions of the complete corresponding committed `thirdperson_env*.mp4` files: 640 pixels wide, 12.5 fps, 128-color palettes, infinite looping. The README displays these animations inline and links to the original MP4 recordings.
+
+The retained `rollout-env{1,2,3,4,6}.jpg` files are frame extractions at 3 seconds. Both formats come from recorded experiments, not generated locomotion imagery.
