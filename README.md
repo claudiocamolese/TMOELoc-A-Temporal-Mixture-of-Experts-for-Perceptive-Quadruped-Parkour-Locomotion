@@ -23,7 +23,7 @@ These are offline third-person reconstructions from recorded robot link poses an
 
 ![ExpertParkour architecture: privileged teacher, multimodal causal Transformer, four routed motor experts, and experimental PPO refinement](docs/assets/expertparkour-architecture.png)
 
-*An original illustration inspired by Figure 2 of [Extreme Parkour](https://extreme-parkour.github.io/resources/parkour.pdf), redrawn for this repository's student and training stages. [Figure provenance and generation prompt](docs/assets/architecture-generation.md).*
+*An original illustration inspired by Figure 2 of [Extreme Parkour](https://extreme-parkour.github.io/resources/parkour.pdf), redrawn for this repository's student and training stages. [TMOELoc](docs/assets/architecture-generation.md).*
 
 ### What changes from the upstream student?
 
