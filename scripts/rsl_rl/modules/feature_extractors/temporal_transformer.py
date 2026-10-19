@@ -48,16 +48,17 @@ class PreLNTransformerBlock(nn.Module):
         output projection.
         """
         e = h.shape[-1]
-        w = self.attn.in_proj_weight[2 * e:]                 # value projection
-        b = self.attn.in_proj_bias[2 * e:] if self.attn.in_proj_bias is not None else None
-        v = torch.nn.functional.linear(h, w, b)              # (B, T, E)
+        w = self.attn.in_proj_weight[2 * e :]  # value projection
+        b = self.attn.in_proj_bias[2 * e :] if self.attn.in_proj_bias is not None else None
+        v = torch.nn.functional.linear(h, w, b)  # (B, T, E)
         counts = torch.arange(1, h.shape[1] + 1, device=h.device, dtype=v.dtype).view(1, -1, 1)
-        v = v.cumsum(dim=1) / counts                         # causal running mean
+        v = v.cumsum(dim=1) / counts  # causal running mean
         return self.attn.out_proj(v)
 
     def forward(
         self, x: torch.Tensor, attn_mask: torch.Tensor | None = None, need_weights: bool = False
     ) -> torch.Tensor:
+        """Apply causal attention and the feed-forward residual to a (batch, time, width) tensor."""
         h = self.norm_attn(x)
         if self.uniform_attention:
             attn_out = self._uniform_attn(h)
@@ -128,14 +129,20 @@ class TemporalContextEncoder(nn.Module):
         )
         self.norm_out = nn.LayerNorm(self.d_model)
         self.context_proj = (
-            nn.Identity() if self.context_dim == self.d_model else nn.Linear(self.d_model, self.context_dim)
+            nn.Identity()
+            if self.context_dim == self.d_model
+            else nn.Linear(self.d_model, self.context_dim)
         )
 
-        causal_mask = torch.triu(torch.ones(self.history_len, self.history_len, dtype=torch.bool), diagonal=1)
+        causal_mask = torch.triu(
+            torch.ones(self.history_len, self.history_len, dtype=torch.bool), diagonal=1
+        )
         self.register_buffer("causal_mask", causal_mask, persistent=False)
 
-        # -- auxiliary heads (training-time supervision, droppable at deployment)
+        # Training supervises all readouts. Heading is also required by the
+        # actor at inference; velocity is required when vel_source='predicted'.
         def _head(out_dim: int, tanh: bool) -> nn.Sequential:
+            """Construct a context readout, with bounded output where the target requires it."""
             layers = [nn.Linear(self.context_dim, 64), nn.ELU(), nn.Linear(64, out_dim)]
             if tanh:
                 layers.append(nn.Tanh())
@@ -152,7 +159,7 @@ class TemporalContextEncoder(nn.Module):
         self.dyn_head = _head(depth_cfg["num_dyn_targets"], tanh=False)
         self.vel_head = _head(depth_cfg["num_priv_explicit"], tanh=False)
         self.yaw_head = _head(2, tanh=True)
-        # Optional: one logit for "this episode falls within the next second".
+        # Optional: one logit for a fall in the configured future risk window.
         # Built only when enabled, so a checkpoint trained without it still loads
         # into this class unchanged.
         self.use_risk_head = bool(depth_cfg.get("use_risk_head", False))
@@ -185,6 +192,7 @@ class TemporalContextEncoder(nn.Module):
     # ------------------------------------------------------------------ state
 
     def _lazy_init(self, num_envs: int, device: torch.device) -> None:
+        """Allocate per-environment temporal buffers on the input device."""
         self.prop_buffer = torch.zeros(num_envs, self.prop_window, self.num_prop, device=device)
         self.token_buffer = torch.zeros(num_envs, self.history_len, self.d_model, device=device)
         self._initialised = True
@@ -195,9 +203,12 @@ class TemporalContextEncoder(nn.Module):
             self._lazy_init(proprioception.shape[0], proprioception.device)
             self.prop_buffer = proprioception.detach().unsqueeze(1).repeat(1, self.prop_window, 1)
             return
-        self.prop_buffer = torch.cat([self.prop_buffer[:, 1:], proprioception.detach().unsqueeze(1)], dim=1)
+        self.prop_buffer = torch.cat(
+            [self.prop_buffer[:, 1:], proprioception.detach().unsqueeze(1)], dim=1
+        )
 
     def reset_depth_cache(self) -> None:
+        """Invalidate cached visual features before the next perception update."""
         self.depth_latent_cache = None
 
     def reset(self, dones: torch.Tensor | None = None) -> None:
@@ -215,6 +226,7 @@ class TemporalContextEncoder(nn.Module):
         self.token_buffer = self.token_buffer * keep
 
     def detach_buffers(self) -> None:
+        """Truncate rollout autograd history while preserving the temporal buffer values."""
         self.prop_buffer = self.prop_buffer.detach().clone()
         self.token_buffer = self.token_buffer.detach().clone()
 

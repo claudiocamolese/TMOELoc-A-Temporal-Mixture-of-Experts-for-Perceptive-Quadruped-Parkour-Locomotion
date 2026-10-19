@@ -1,0 +1,43 @@
+# Only ExpertParkour-owned modules are formatted and linted; upstream files are excluded.
+target-version = "py310"
+line-length = 100
+include = [
+    "parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/rsl_student_moe_cfg.py",
+    "scripts/analysis/analyze_student.py",
+    "scripts/analysis/attention_probe.py",
+    "scripts/analysis/episode_metrics.py",
+    "scripts/analysis/fall_predictability.py",
+    "scripts/analysis/fit_context_probe.py",
+    "scripts/analysis/inspect_moe_weights.py",
+    "scripts/analysis/plot_attention.py",
+    "scripts/analysis/render_rollout.py",
+    "scripts/export_slim_checkpoint.py",
+    "scripts/rl_verdict.py",
+    "scripts/rsl_rl/evaluate_students.py",
+    "scripts/rsl_rl/finetune_rl.py",
+    "scripts/rsl_rl/intervention_sweep.py",
+    "scripts/rsl_rl/modules/distillation_moe.py",
+    "scripts/rsl_rl/modules/feature_extractors/temporal_transformer.py",
+    "scripts/rsl_rl/modules/moe_actor.py",
+    "scripts/rsl_rl/modules/on_policy_runner_moe.py",
+    "scripts/rsl_rl/modules/optim_utils.py",
+    "scripts/rsl_rl/modules/student_inference.py",
+    "scripts/rsl_rl/play_student.py",
+    "scripts/rsl_rl/modules/student_observations.py",
+    "scripts/rsl_rl/modules/ppo_utils.py",
+    "scripts/analysis/trace_utils.py",
+    "tests/**/*.py",
+]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I", "D100", "D101", "D102", "D103"]
+
+[lint.per-file-ignores]
+# Isaac Sim must start before Gym, task registration and simulator-dependent imports.
+"scripts/rsl_rl/evaluate_students.py" = ["I001"]
+"scripts/rsl_rl/play_student.py" = ["I001"]
+"scripts/rsl_rl/finetune_rl.py" = ["I001"]
+"scripts/rsl_rl/intervention_sweep.py" = ["I001"]
+# The headless Matplotlib backend must be selected before importing pyplot.
+"scripts/analysis/plot_attention.py" = ["I001"]
+"scripts/analysis/render_rollout.py" = ["I001"]

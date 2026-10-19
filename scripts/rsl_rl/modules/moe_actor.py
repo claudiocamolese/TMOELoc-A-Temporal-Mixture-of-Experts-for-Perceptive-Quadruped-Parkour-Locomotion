@@ -1,6 +1,6 @@
 """Sparse Top-k Mixture-of-Experts actor for quadruped parkour control.
 
-The router observes ``u_t = [proprioception ; context ; estimated base velocity]``
+The router observes ``u_t = [proprioception ; context ; explicit velocity state]``
 and mixes ``K`` expert MLPs into a single joint-position target. Routing is
 refreshed at the perception rate (10 Hz) and cached in between, while the
 experts themselves run at the control rate (50 Hz) on fresh proprioception.
@@ -15,7 +15,7 @@ import torch.nn as nn
 
 
 class FusedExperts(nn.Module):
-    """``num_experts`` identical MLPs evaluated as a batched matmul.
+    """Equally shaped, independently parameterized MLPs evaluated as a batched matmul.
 
     Mathematically identical to a ``ModuleList`` of ``nn.Sequential`` MLPs
     (including the initialisation), but it issues one ``baddbmm`` per layer
@@ -23,7 +23,9 @@ class FusedExperts(nn.Module):
     kernel-launch bound, so the fused form is markedly faster.
     """
 
-    def __init__(self, num_experts: int, in_dim: int, hidden_dims: tuple[int, ...], out_dim: int, act):
+    def __init__(
+        self, num_experts: int, in_dim: int, hidden_dims: tuple[int, ...], out_dim: int, act
+    ):
         super().__init__()
         self.num_experts = num_experts
         dims = [in_dim, *hidden_dims, out_dim]
@@ -34,8 +36,8 @@ class FusedExperts(nn.Module):
             b = torch.empty(num_experts, 1, dims[i + 1])
             for k in range(num_experts):
                 ref = nn.Linear(dims[i], dims[i + 1])
-                w[k] = ref.weight.data.t()
-                b[k, 0] = ref.bias.data
+                w[k] = ref.weight.detach().t()
+                b[k, 0] = ref.bias.detach()
             weights.append(nn.Parameter(w))
             biases.append(nn.Parameter(b))
         self.weights = nn.ParameterList(weights)
@@ -53,6 +55,8 @@ class FusedExperts(nn.Module):
 
 
 class MoEActor(nn.Module):
+    """Blend independently parameterized motor experts with cached learned routing weights."""
+
     def __init__(
         self,
         num_prop: int,
@@ -73,6 +77,8 @@ class MoEActor(nn.Module):
         self.num_priv_explicit = num_priv_explicit if use_vel_in_input else 0
         self.use_vel_in_input = use_vel_in_input
         self.num_experts = num_experts
+        if num_experts < 1 or top_k < 1:
+            raise ValueError("num_experts and top_k must both be positive")
         self.top_k = min(top_k, num_experts)
         self.in_features = num_prop + context_dim + self.num_priv_explicit
 
@@ -91,7 +97,9 @@ class MoEActor(nn.Module):
         nn.init.orthogonal_(self.router[-1].weight, gain=0.1)
         nn.init.zeros_(self.router[-1].bias)
 
-        self.experts = FusedExperts(num_experts, self.in_features, tuple(expert_hidden_dims), num_actions, act)
+        self.experts = FusedExperts(
+            num_experts, self.in_features, tuple(expert_hidden_dims), num_actions, act
+        )
 
         # Analysis-only: replace the learned gate distribution after it is
         # computed. None keeps training and normal evaluation exactly as they
@@ -113,10 +121,13 @@ class MoEActor(nn.Module):
     def build_input(
         self, proprioception: torch.Tensor, context: torch.Tensor, vel: torch.Tensor | None = None
     ) -> torch.Tensor:
+        """Concatenate current proprioception, temporal context, and optional explicit velocity."""
         parts = [proprioception, context]
         if self.use_vel_in_input:
             if vel is None:
-                raise ValueError("MoEActor was configured with use_vel_in_input=True but no velocity was given.")
+                raise ValueError(
+                    "MoEActor was configured with use_vel_in_input=True but no velocity was given."
+                )
             parts.append(vel)
         return torch.cat(parts, dim=-1)
 
@@ -163,6 +174,7 @@ class MoEActor(nn.Module):
             )
 
     def detach_routing(self) -> None:
+        """Truncate the routing graph after an optimization window."""
         if self.gates is not None:
             self.gates = self.gates.detach().clone()
         if self.probs is not None:
@@ -179,6 +191,7 @@ class MoEActor(nn.Module):
         update_routing: bool = False,
         route_u: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Blend expert outputs; replay may supply the input that originally refreshed the gates."""
         u = self.build_input(proprioception, context, vel)
         if route_u is not None:
             # Replay: the gates are recomputed from the input that actually set
@@ -251,6 +264,7 @@ class MoEActor(nn.Module):
 
     @torch.no_grad()
     def routing_stats(self) -> dict[str, float]:
+        """Report dispatch frequency, gate entropy, and effective expert count."""
         if self.probs is None:
             return {}
         usage = (self.gates > 0).float().mean(dim=0)

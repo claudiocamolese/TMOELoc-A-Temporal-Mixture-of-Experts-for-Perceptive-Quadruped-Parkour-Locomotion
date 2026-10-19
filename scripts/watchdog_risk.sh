@@ -7,8 +7,9 @@
 # directory and restarts from zero while looking healthy. A resume therefore
 # passes only --resume/--load_run/--checkpoint.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 LOG=logs/watchdog_risk.log
 TASK=Isaac-Extreme-Parkour-StudentMoERisk-Unitree-Go2-v0
@@ -18,7 +19,7 @@ TARGET=15000; ENVS=192; SEED=1; POLL=120; MAX_RESTARTS=6; HEARTBEAT=1800
 n_restart=0
 log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 running(){ pgrep -f -- "python.*train\.py.*StudentMoERisk" >/dev/null 2>&1; }
-iters(){ grep -c "Learning iteration" "$CONSOLE" 2>/dev/null || echo 0; }
+iters(){ count_training_iterations "$CONSOLE"; }
 
 log "=== risk watchdog started (pid $$) ==="
 last=0
@@ -34,7 +35,7 @@ while true; do
     log "GIVING UP after $n_restart restarts at iteration $it."; exit 1
   fi
   n_restart=$((n_restart+1))
-  ckpt=$(ls -1t "logs/rsl_rl/$EXP"/*/model_*.pt 2>/dev/null | head -1)
+  ckpt=$(select_checkpoint "logs/rsl_rl/$EXP/*/model_*.pt" newest)
   args=(--task "$TASK" --seed "$SEED" --headless --num_envs "$ENVS" --max_iterations "$TARGET")
   if [ -n "$ckpt" ] && [ -f "$ckpt" ]; then
     args+=(--resume --load_run "$(basename "$(dirname "$ckpt")")" --checkpoint "$(basename "$ckpt")")

@@ -9,8 +9,12 @@ regressed out.
   python scripts/rl_verdict.py                 # both arms
   python scripts/rl_verdict.py --min-iter 2000 # only judge once there is enough
 """
+
 from __future__ import annotations
-import argparse, re, sys
+
+import argparse
+import re
+
 import numpy as np
 
 PAT = re.compile(
@@ -19,16 +23,17 @@ PAT = re.compile(
 
 
 def load(path):
+    """Parse numeric PPO progress records; return None for missing or empty logs."""
     rows = []
     try:
-        f = open(path, errors="ignore")
+        with open(path, errors="ignore") as stream:
+            for line in stream:
+                for record in line.replace("\r", "\n").split("\n"):
+                    match = PAT.match(record)
+                    if match:
+                        rows.append([float(value) for value in match.groups()])
     except FileNotFoundError:
         return None
-    for line in f:
-        for sub in line.replace("\r", "\n").split("\n"):
-            m = PAT.match(sub)
-            if m:
-                rows.append([float(x) for x in m.groups()])
     return np.array(rows) if rows else None
 
 
@@ -39,7 +44,7 @@ def judge(a, min_iter, warmup_frac=0.15):
     switch from a deterministic distilled actor to a stochastic one, and that
     transient is not what we are trying to measure.
     """
-    it, rw, ep, kl, lr, lv = a.T
+    it, rw, _episode_length, _kl, lr, lv = a.T
     if it.max() < min_iter:
         return None, f"only {int(it.max())} iterations, need {min_iter}"
     keep = it >= it.max() * warmup_frac
@@ -60,12 +65,14 @@ def judge(a, min_iter, warmup_frac=0.15):
         try:
             c, *_ = np.linalg.lstsq(A, rw[idx], rcond=None)
             boots.append(c[0])
-        except Exception:
-            pass
+        except np.linalg.LinAlgError:
+            continue
     se = float(np.std(boots)) if boots else float("nan")
     at_floor = 100 * float((lr <= 1.01e-5).mean())
-    msg = (f"iter {int(a[-1,0])}  reward/1k raw {raw:+.2f}  at constant difficulty "
-           f"{adj:+.2f} +- {se:.2f}  terrain {lv.mean():.2f}  lr at floor {at_floor:.0f}%")
+    msg = (
+        f"iter {int(a[-1, 0])}  reward/1k raw {raw:+.2f}  at constant difficulty "
+        f"{adj:+.2f} +- {se:.2f}  terrain {lv.mean():.2f}  lr at floor {at_floor:.0f}%"
+    )
     if np.isnan(se) or se == 0:
         return "UNRESOLVED", msg
     if adj > 2 * se:
@@ -76,13 +83,16 @@ def judge(a, min_iter, warmup_frac=0.15):
 
 
 def main():
+    """Report difficulty-adjusted reward trends for each recorded refinement arm."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-iter", type=int, default=2000)
     args = ap.parse_args()
     out = {}
-    for tag, path in (("dense", "logs/run_console/ft_moe.log"),
-                      ("top2", "logs/run_console/ft_top2.log"),
-                      ("baseline", "logs/run_console/ft_base.log")):
+    for tag, path in (
+        ("dense", "logs/run_console/ft_moe.log"),
+        ("top2", "logs/run_console/ft_top2.log"),
+        ("baseline", "logs/run_console/ft_base.log"),
+    ):
         a = load(path)
         if a is None or len(a) < 20:
             print(f"{tag:9s} no data yet")
@@ -91,9 +101,11 @@ def main():
         out[tag] = verdict
         print(f"{tag:9s} {str(verdict):11s} {msg}")
     if out and all(v == "DEGRADING" for v in out.values()):
-        print("\nEvery arm is degrading at constant difficulty. That is not a tuning "
-              "problem; stop and look at the advantage computation before spending "
-              "the remaining budget.")
+        print(
+            "\nEvery arm is degrading at constant difficulty. That is not a tuning "
+            "problem; stop and look at the advantage computation before spending "
+            "the remaining budget."
+        )
     elif any(v == "IMPROVING" for v in out.values()):
         print("\nAt least one arm is improving; let them run.")
 

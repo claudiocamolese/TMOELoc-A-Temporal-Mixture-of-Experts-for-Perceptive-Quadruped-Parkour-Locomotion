@@ -24,7 +24,9 @@ import numpy as np
 PRIV_NAMES = ["mass", "com_x", "com_y", "com_z", "friction"]
 
 
-def ridge_probe(x: np.ndarray, y: np.ndarray, train: np.ndarray, test: np.ndarray, alpha: float = 1.0):
+def ridge_probe(
+    x: np.ndarray, y: np.ndarray, train: np.ndarray, test: np.ndarray, alpha: float = 1.0
+):
     """Ridge regression R^2 on held-out data. Returns (r2, baseline_r2)."""
     xt, yt = x[train], y[train]
     mu, sigma = xt.mean(0), xt.std(0) + 1e-6
@@ -42,6 +44,7 @@ def ridge_probe(x: np.ndarray, y: np.ndarray, train: np.ndarray, test: np.ndarra
 
 
 def main():
+    """Report expert usage, gait specialization, and grouped dynamics probes for a trace."""
     ap = argparse.ArgumentParser()
     ap.add_argument("trace", help="trace_*.npz produced by evaluate_students.py")
     ap.add_argument("--out", default=None, help="where to write analysis.json")
@@ -49,9 +52,9 @@ def main():
 
     d = np.load(args.trace, allow_pickle=True)
     vocab = [str(s) for s in d["terrain_vocab"]]
-    gates = d["gates"].astype(np.float32)          # (T, N, K)
-    contacts = d["contacts"].astype(np.float32)    # (T, N, 4)
-    terrain = d["terrain"]                         # (T, N)
+    gates = d["gates"].astype(np.float32)  # (T, N, K)
+    contacts = d["contacts"].astype(np.float32)  # (T, N, 4)
+    terrain = d["terrain"]  # (T, N)
     out: dict = {"trace": os.path.basename(args.trace)}
 
     if gates.shape[-1] < 2:
@@ -84,22 +87,34 @@ def main():
         print(f"usage perplexity (experts the task actually uses): {usage_ppl:.3f} / {k}")
         print(f"blend perplexity (mixing within the top-k):        {blend_ppl:.3f} / {top_k:.0f}")
         for i in range(k):
-            print(f"  expert {i}: selected {usage[i] * 100:5.1f}% of steps, mean gate weight {weight[i]:.3f}")
+            print(
+                f"  expert {i}: selected {usage[i] * 100:5.1f}% of steps, mean gate weight {weight[i]:.3f}"
+            )
         verdict = (
-            "collapsed -- fewer experts would lose nothing" if usage_ppl < 0.5 * k
-            else "saturated -- worth testing more experts" if usage_ppl > 0.95 * k
+            "collapsed -- fewer experts would lose nothing"
+            if usage_ppl < 0.5 * k
+            else "saturated -- worth testing more experts"
+            if usage_ppl > 0.95 * k
             else "well matched to the task"
         )
         print(f"verdict: {verdict}\n")
         out["routing"] = {
-            "num_experts": int(k), "experts_per_step": top_k,
-            "usage_perplexity": usage_ppl, "blend_perplexity": blend_ppl,
-            "usage": usage.tolist(), "mean_weight": weight.tolist(), "verdict": verdict,
+            "num_experts": int(k),
+            "experts_per_step": top_k,
+            "usage_perplexity": usage_ppl,
+            "blend_perplexity": blend_ppl,
+            "usage": usage.tolist(),
+            "mean_weight": weight.tolist(),
+            "verdict": verdict,
         }
 
         # ------------------------------------------- 2a. expert x terrain
         print("=== 2a. expert use by terrain ===")
-        print(f"{'terrain':<18} | " + " | ".join(f"{'E' + str(i):>7}" for i in range(k)) + " |  samples")
+        print(
+            f"{'terrain':<18} | "
+            + " | ".join(f"{'E' + str(i):>7}" for i in range(k))
+            + " |  samples"
+        )
         table = {}
         for code, name in enumerate(vocab):
             sel = terrain == code
@@ -108,15 +123,25 @@ def main():
             share = gates[sel].reshape(-1, k).mean(0)
             share = share / max(share.sum(), 1e-8)
             table[name] = share.tolist()
-            print(f"{name:<18} | " + " | ".join(f"{100 * s:6.1f}%" for s in share) + f" | {int(sel.sum()):8d}")
+            print(
+                f"{name:<18} | "
+                + " | ".join(f"{100 * s:6.1f}%" for s in share)
+                + f" | {int(sel.sum()):8d}"
+            )
         out["expert_by_terrain"] = table
 
         # ------------------------------------------- 2b. expert x gait phase
         n_contact = (contacts > 0).sum(-1)
-        phases = {"flight (0 feet)": n_contact == 0, "push/land (1)": n_contact == 1,
-                  "gait (2-3)": (n_contact >= 2) & (n_contact <= 3), "stance (4)": n_contact == 4}
+        phases = {
+            "flight (0 feet)": n_contact == 0,
+            "push/land (1)": n_contact == 1,
+            "gait (2-3)": (n_contact >= 2) & (n_contact <= 3),
+            "stance (4)": n_contact == 4,
+        }
         print("\n=== 2b. expert use by gait phase ===")
-        print(f"{'phase':<18} | " + " | ".join(f"{'E' + str(i):>7}" for i in range(k)) + " |  samples")
+        print(
+            f"{'phase':<18} | " + " | ".join(f"{'E' + str(i):>7}" for i in range(k)) + " |  samples"
+        )
         pt = {}
         for name, sel in phases.items():
             if not sel.any():
@@ -124,20 +149,26 @@ def main():
             share = gates[sel].reshape(-1, k).mean(0)
             share = share / max(share.sum(), 1e-8)
             pt[name] = share.tolist()
-            print(f"{name:<18} | " + " | ".join(f"{100 * s:6.1f}%" for s in share) + f" | {int(sel.sum()):8d}")
+            print(
+                f"{name:<18} | "
+                + " | ".join(f"{100 * s:6.1f}%" for s in share)
+                + f" | {int(sel.sum()):8d}"
+            )
         out["expert_by_phase"] = pt
 
         # a specialised router routes differently in different situations; if
         # every row of those tables is the same, the router ignores the state
         rows = np.array(list(table.values()) + list(pt.values()))
         spread = float(rows.std(0).mean()) if len(rows) > 1 else 0.0
-        print(f"\nrouting spread across conditions: {spread:.4f}  "
-              f"({'state-dependent' if spread > 0.02 else 'nearly constant -- no specialisation'})")
+        print(
+            f"\nrouting spread across conditions: {spread:.4f}  "
+            f"({'state-dependent' if spread > 0.02 else 'nearly constant -- no specialisation'})"
+        )
         out["routing_spread"] = spread
 
     # ------------------------------------------------- 3. dynamics probe
-    ctx = d["context"].astype(np.float32)          # (T', N, D)
-    priv = d["priv_latent"].astype(np.float32)     # (T', N, 29)
+    ctx = d["context"].astype(np.float32)  # (T', N, D)
+    priv = d["priv_latent"].astype(np.float32)  # (T', N, 29)
     n_env = ctx.shape[1]
     print("\n=== 3. linear probe: context -> hidden dynamics ===")
     print(f"context {ctx.shape[2]}-d, {ctx.shape[0]} snapshots x {n_env} environments")
@@ -148,7 +179,7 @@ def main():
     # both train and test and report a meaningless R^2.
     rng = np.random.default_rng(0)
     perm = rng.permutation(n_env)
-    tr_env, te_env = perm[: n_env // 2], perm[n_env // 2:]
+    tr_env, te_env = perm[: n_env // 2], perm[n_env // 2 :]
     x = ctx.reshape(-1, ctx.shape[2])
     env_idx = np.tile(np.arange(n_env), ctx.shape[0])
     train = np.isin(env_idx, tr_env)

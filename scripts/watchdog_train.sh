@@ -19,8 +19,9 @@
 # --resume/--load_run/--checkpoint and NO --teacher_checkpoint; only a run with
 # no checkpoint of its own is (correctly) started from the teacher.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 LOG=logs/watchdog.log
 STATE=logs/watchdog_state
@@ -45,9 +46,8 @@ log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 # interpreter and the script leaves only real training processes.
 running()      { pgrep -f -- "python.*train\.py.*$1" >/dev/null 2>&1; }
 running_chain(){ pgrep -f -- "bash.*run_experiments\.sh" >/dev/null 2>&1; }
-iters_done()   { tr '\r' '\n' < "$1" 2>/dev/null | grep -c "Learning iteration"; }
-latest_run()   { ls -1dt "logs/rsl_rl/$1"/*/ 2>/dev/null | head -1; }
-latest_ckpt()  { ls -1t "logs/rsl_rl/$1"/*/model_*.pt 2>/dev/null | head -1; }
+iters_done()   { count_training_iterations "$1"; }
+latest_ckpt()  { select_checkpoint "logs/rsl_rl/$1/*/model_*.pt"; }
 
 restart_count() { cat "$STATE/restarts_$1" 2>/dev/null || echo 0; }
 bump_restart()  { echo $(( $(restart_count "$1") + 1 )) > "$STATE/restarts_$1"; }

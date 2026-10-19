@@ -1,13 +1,19 @@
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
-ParkourRslRlOnPolicyRunnerCfg,
-ParkourRslRlPpoActorCriticCfg,
-ParkourRslRlActorCfg,
-ParkourRslRlStateHistEncoderCfg,
-ParkourRslRlEstimatorCfg,
-ParkourRslRlDistillationMoEAlgorithmCfg,
-ParkourRslRlTemporalMoECfg
-)
+"""ExpertParkour student variants; inherited policy settings describe the frozen teacher.
+
+Each task keeps a distinct configuration so experiment settings are recorded in
+the task registration rather than changed implicitly by launcher scripts.
+"""
+
 from isaaclab.utils import configclass
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
+    ParkourRslRlActorCfg,
+    ParkourRslRlDistillationMoEAlgorithmCfg,
+    ParkourRslRlEstimatorCfg,
+    ParkourRslRlOnPolicyRunnerCfg,
+    ParkourRslRlPpoActorCriticCfg,
+    ParkourRslRlStateHistEncoderCfg,
+    ParkourRslRlTemporalMoECfg,
+)
 
 
 @configclass
@@ -45,14 +51,10 @@ class UnitreeGo2ParkourStudentMoEPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         activation="elu",
         actor=ParkourRslRlActorCfg(
             class_name="Actor",
-            state_history_encoder=ParkourRslRlStateHistEncoderCfg(
-                class_name="StateHistoryEncoder"
-            )
-        )
+            state_history_encoder=ParkourRslRlStateHistEncoderCfg(class_name="StateHistoryEncoder"),
+        ),
     )
-    estimator = ParkourRslRlEstimatorCfg(
-        hidden_dims=[128, 64]
-    )
+    estimator = ParkourRslRlEstimatorCfg(hidden_dims=[128, 64])
     depth_encoder = ParkourRslRlTemporalMoECfg(
         learning_rate=1e-3,
         num_steps_per_env=24 * 5,
@@ -64,7 +66,7 @@ class UnitreeGo2ParkourStudentMoEPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=2.e-4,
+        learning_rate=2.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
@@ -220,7 +222,9 @@ class UnitreeGo2ParkourStudentMoEDensePPORunnerCfg(UnitreeGo2ParkourStudentMoEPP
 
 
 @configclass
-class UnitreeGo2ParkourStudentMoEDenseWarmPPORunnerCfg(UnitreeGo2ParkourStudentMoEDensePPORunnerCfg):
+class UnitreeGo2ParkourStudentMoEDenseWarmPPORunnerCfg(
+    UnitreeGo2ParkourStudentMoEDensePPORunnerCfg
+):
     """Dense routing plus the warm-started actor.
 
     Selected over the plain dense variant only if the warm start proves itself at

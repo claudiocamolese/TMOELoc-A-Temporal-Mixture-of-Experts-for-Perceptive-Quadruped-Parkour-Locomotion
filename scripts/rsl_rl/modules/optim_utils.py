@@ -52,6 +52,7 @@ class RunningStandardiser:
         self.num_features = num_features
 
     def __call__(self, x, update: bool = True):
+        """Standardize a batch using detached moving moments, updating them when requested."""
         import torch
 
         if self.mean is None:
@@ -64,9 +65,11 @@ class RunningStandardiser:
         return (x - self.mean) / torch.sqrt(self.var + self.eps)
 
     def state_dict(self):
+        """Expose running target moments for callers that persist normalization state."""
         return {"mean": self.mean, "var": self.var}
 
     def load_state_dict(self, sd):
+        """Restore previously saved moving moments without recomputing them."""
         self.mean, self.var = sd.get("mean"), sd.get("var")
 
 
@@ -94,6 +97,7 @@ class SpikeGuard:
         self.consecutive = 0
 
     def should_skip(self, loss: float) -> bool:
+        """Record a loss and reject nonfinite values or bounded runs of extreme spikes."""
         if not math.isfinite(loss):
             self.num_skipped += 1
             self.consecutive += 1

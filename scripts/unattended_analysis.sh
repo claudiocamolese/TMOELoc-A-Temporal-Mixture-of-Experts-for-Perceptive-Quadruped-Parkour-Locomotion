@@ -13,8 +13,9 @@
 # stage waits until there is real headroom, and the rollouts run at fewer
 # environments than the training does.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 LOG=logs/analysis_unattended.log
 TARGET=15000
@@ -71,7 +72,7 @@ done
 # let the baseline claim its memory first, and never analyse a half-written file
 sleep 900
 
-CKPT=$(ls -1t logs/rsl_rl/unitree_go2_parkour_moe/*/model_*.pt 2>/dev/null | head -1)
+CKPT=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe/*/model_*.pt" newest)
 [ -f "$CKPT" ] || { log "FATAL: no MoE checkpoint found"; exit 1; }
 RUN_DIR=$(dirname "$CKPT")
 OUT="$RUN_DIR/analysis_final"
@@ -85,8 +86,11 @@ EV=("$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py --num_envs "$ENVS" --headl
 
 # ---- 2. weight-space inspection: no simulator, so it can always run --------
 log "START weights"
-nice -n 19 "$PYTHON_BIN" scripts/analysis/inspect_moe_weights.py "$CKPT" >> "$LOG" 2>&1 \
-  && log "OK    weights" || log "FAIL  weights"
+if nice -n 19 "$PYTHON_BIN" scripts/analysis/inspect_moe_weights.py "$CKPT" >> "$LOG" 2>&1; then
+  log "OK    weights"
+else
+  log "FAIL  weights"
+fi
 
 # ---- 3. main rollout: per-terrain metrics, routing, attention --------------
 stage "eval main" "${EV[@]}" --task "$EVAL_TASK" --checkpoint "$CKPT" \
@@ -128,9 +132,14 @@ run_offline() {
   --ablate_context "$OUT/probe_directions.npz" --tag ablated
 
 # ---- 9. the honest headline numbers, matched horizon ----------------------
-TRACES=$(ls "$OUT"/trace_*.npz "$RUN_DIR/sweep_final"/trace_*.npz 2>/dev/null)
-[ -n "$TRACES" ] && run_offline "episode metrics" "$PYTHON_BIN" scripts/analysis/episode_metrics.py \
-  --horizon "$STEPS" --boot 2000 --per-terrain --out "$OUT/episode_metrics.json" $TRACES
+# Arrays preserve filenames containing spaces; nullglob removes unmatched globs.
+shopt -s nullglob
+TRACES=("$OUT"/trace_*.npz "$RUN_DIR/sweep_final"/trace_*.npz)
+shopt -u nullglob
+if (( ${#TRACES[@]} )); then
+  run_offline "episode metrics" "$PYTHON_BIN" scripts/analysis/episode_metrics.py \
+    --horizon "$STEPS" --boot 2000 --per-terrain --out "$OUT/episode_metrics.json" "${TRACES[@]}"
+fi
 
 log "=== analysis finished ==="
 log "results under $OUT and $RUN_DIR/sweep_final"

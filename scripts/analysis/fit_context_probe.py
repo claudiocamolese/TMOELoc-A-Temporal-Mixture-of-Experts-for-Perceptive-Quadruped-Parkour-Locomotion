@@ -17,11 +17,11 @@ switch the mass and COM randomisation events off, leaving nothing to predict.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 
 import numpy as np
+from trace_utils import newest_trace
 
 # informative entries of the 29-d privileged latent; the other 24 are joint
 # stiffness and damping ratios, identically zero because the actuator-gain
@@ -30,27 +30,24 @@ PRIV_NAMES = ["mass", "com_x", "com_y", "com_z", "friction"]
 
 
 def find_trace(path: str | None) -> str:
-    if path and os.path.isfile(path):
-        return path
-    cands = glob.glob(os.path.join(path or "logs", "**", "trace_*.npz"), recursive=True)
-    good = []
-    for c in cands:
-        try:
-            d = np.load(c, allow_pickle=True)
-            if "context" in d.files and "priv_latent" in d.files:
-                p = d["priv_latent"].astype(np.float32)
-                if p.shape[-1] >= 5 and p[:, :, 0].std() > 1e-6:   # mass actually varies
-                    good.append(c)
-        except Exception:
-            pass
-    if not good:
+    """Find the newest trace whose mass randomization provides a nonconstant target."""
+
+    def suitable(archive) -> bool:
+        """Require context snapshots and nonconstant mass targets for the probe."""
+        if "context" not in archive.files or "priv_latent" not in archive.files:
+            return False
+        physical = archive["priv_latent"].astype(np.float32)
+        return physical.ndim == 3 and physical.shape[-1] >= 5 and physical[:, :, 0].std() > 1e-6
+
+    found = newest_trace(path, suitable)
+    if found is None:
         raise SystemExit(
             "no usable trace found.\nRecord one on the TRAINING task (mass and COM must vary):\n"
             "  python scripts/rsl_rl/evaluate_students.py \\\n"
             "      --task Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-v0 \\\n"
             "      --checkpoint <model_*.pt> --num_envs 192 --steps 600 --context_every 3 --headless"
         )
-    return max(good, key=os.path.getmtime)
+    return found
 
 
 def ridge(x, y, train, test, alpha=1.0):
@@ -73,6 +70,7 @@ def ridge(x, y, train, test, alpha=1.0):
 
 
 def main():
+    """Fit grouped dynamics probes and save recoverable context directions for ablation."""
     ap = argparse.ArgumentParser()
     ap.add_argument("trace", nargs="?", default=None)
     ap.add_argument("--out", default=None, help="default: <trace_dir>/probe_directions.npz")
@@ -92,7 +90,7 @@ def main():
     # splitting by timestep puts the same target value in train and test.
     rng = np.random.default_rng(0)
     perm = rng.permutation(n_env)
-    tr, te = perm[: n_env // 2], perm[n_env // 2:]
+    tr, te = perm[: n_env // 2], perm[n_env // 2 :]
     x = ctx.reshape(-1, ctx.shape[2])
     env_idx = np.tile(np.arange(n_env), ctx.shape[0])
     train, test = np.isin(env_idx, tr), np.isin(env_idx, te)
@@ -108,7 +106,9 @@ def main():
         r2, v = ridge(x, y, train, test, args.alpha)
         r2c, _ = ridge(x[rng.permutation(len(x))], y, train, test, args.alpha)
         good = r2 > 0.2
-        print(f"{name:<10} | {r2:7.3f} | {r2c:8.3f} | {'recoverable' if good else 'not recoverable'}")
+        print(
+            f"{name:<10} | {r2:7.3f} | {r2c:8.3f} | {'recoverable' if good else 'not recoverable'}"
+        )
         report[name] = {"r2": r2, "r2_shuffled_control": r2c}
         if good:
             dirs[name] = v.astype(np.float32)
@@ -121,10 +121,12 @@ def main():
     with open(os.path.splitext(dst)[0] + ".json", "w") as fh:
         json.dump({"trace": path, "probes": report, "saved_directions": list(dirs)}, fh, indent=2)
     print(f"\nsaved {len(dirs)} direction(s) [{', '.join(dirs)}] to {dst}")
-    print("\nnext: test whether the actor uses them\n"
-          "  python scripts/rsl_rl/evaluate_students.py --task <...-Eval-v0> \\\n"
-          f"      --checkpoint <model_*.pt> --ablate_context {dst} --ablate_dims {','.join(dirs)} \\\n"
-          "      --num_envs 192 --steps 800 --tag ablated --headless")
+    print(
+        "\nnext: test whether the actor uses them\n"
+        "  python scripts/rsl_rl/evaluate_students.py --task <...-Eval-v0> \\\n"
+        f"      --checkpoint <model_*.pt> --ablate_context {dst} --ablate_dims {','.join(dirs)} \\\n"
+        "      --num_envs 192 --steps 800 --tag ablated --headless"
+    )
 
 
 if __name__ == "__main__":

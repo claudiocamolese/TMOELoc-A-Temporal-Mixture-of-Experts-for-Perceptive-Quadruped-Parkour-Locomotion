@@ -22,8 +22,9 @@
 # checkpoint written in the last few seconds. Expect training to slow down while
 # the simulator is up.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 CKPT=""; RUN_DIR=""; STEPS=800; NUM_ENVS=192; SKIP_ABL=0; MIN_AGE=30
 EVAL_TASK="Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-Eval-v0"
@@ -131,4 +132,4 @@ fi
 
 echo
 echo "done. everything under $OUT:"
-ls -1sh "$OUT" | sed 's/^/  /'
+find "$OUT" -maxdepth 1 -type f -printf '  %k KiB %f\n' | sort

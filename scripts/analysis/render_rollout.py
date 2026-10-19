@@ -15,6 +15,7 @@ import glob
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -77,9 +78,14 @@ def resolve_rollout(path: str | None) -> str:
 
 
 def main():
+    """Render link poses and scanned terrain from a saved rollout into an MP4."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("rollout", nargs="?", default=None,
-                    help="rollout_*.npz, or a run directory, or omit for the newest")
+    ap.add_argument(
+        "rollout",
+        nargs="?",
+        default=None,
+        help="rollout_*.npz, or a run directory, or omit for the newest",
+    )
     ap.add_argument("--env", type=int, default=0, help="which environment to follow")
     ap.add_argument("--fps", type=int, default=25)
     ap.add_argument("--stride", type=int, default=2, help="use every Nth control step")
@@ -95,18 +101,16 @@ def main():
         raise SystemExit("This rollout predates the state dump. Re-record with play_student.py.")
 
     e = args.env
-    body_pos = d["body_pos"][:, e]           # (T, num_bodies, 3)
-    scan = d["scan_hits"][:, e]              # (T, num_rays, 3)
-    contacts = d["contacts"][:, e]           # (T, 4)
+    body_pos = d["body_pos"][:, e]  # (T, num_bodies, 3)
+    scan = d["scan_hits"][:, e]  # (T, num_rays, 3)
+    contacts = d["contacts"][:, e]  # (T, 4)
     gates = d["gates"][:, e] if d["gates"].shape[-1] > 1 else None
     terrain = str(d["terrain_names"][e]) if "terrain_names" in d else "?"
     body_names = [str(s) for s in d["body_names"]]
     chains = build_skeleton(body_names)
     steps = range(0, len(body_pos), args.stride)
 
-    out = args.out or os.path.join(
-        os.path.dirname(args.rollout), f"thirdperson_env{e}.mp4"
-    )
+    out = args.out or os.path.join(os.path.dirname(args.rollout), f"thirdperson_env{e}.mp4")
 
     fig = plt.figure(figsize=(9, 5.5), facecolor="#111318")
     gs = fig.add_gridspec(1, 2, width_ratios=[4.6, 1], wspace=0.02)
@@ -143,25 +147,49 @@ def main():
                 # per frame: on flat ground the only variation is the terrain's
                 # 2 cm roughness, which then gets stretched across the whole
                 # colormap and reads as structure that is not there.
-                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=pts[:, 2] - base[2],
-                           cmap="viridis", vmin=Z_LO, vmax=Z_HI,
-                           s=26, alpha=0.9, linewidths=0, depthshade=False)
+                ax.scatter(
+                    pts[:, 0],
+                    pts[:, 1],
+                    pts[:, 2],
+                    c=pts[:, 2] - base[2],
+                    cmap="viridis",
+                    vmin=Z_LO,
+                    vmax=Z_HI,
+                    s=26,
+                    alpha=0.9,
+                    linewidths=0,
+                    depthshade=False,
+                )
 
             # where the base has been, so motion is visible in a still frame
-            trail = body_pos[max(0, t - 120):t + 1, 0]
+            trail = body_pos[max(0, t - 120) : t + 1, 0]
             if len(trail) > 1:
-                ax.plot(trail[:, 0], trail[:, 1], trail[:, 2], "-",
-                        color="#7f8ea3", lw=1.2, alpha=0.75, zorder=3)
+                ax.plot(
+                    trail[:, 0],
+                    trail[:, 1],
+                    trail[:, 2],
+                    "-",
+                    color="#7f8ea3",
+                    lw=1.2,
+                    alpha=0.75,
+                    zorder=3,
+                )
 
             # robot skeleton, one colour per leg, foot marker filled on contact
             for li, (leg, chain) in enumerate(chains):
                 p = body_pos[t, chain]
-                ax.plot(p[:, 0], p[:, 1], p[:, 2], "-o", color=LEG_COLORS[leg],
-                        lw=3.0, ms=4.5, zorder=5)
+                ax.plot(
+                    p[:, 0], p[:, 1], p[:, 2], "-o", color=LEG_COLORS[leg], lw=3.0, ms=4.5, zorder=5
+                )
                 touching = contacts[t, li] > 0
-                ax.scatter(*p[-1], s=110 if touching else 40,
-                           c=LEG_COLORS[leg] if touching else "none",
-                           edgecolors=LEG_COLORS[leg], linewidths=1.8, zorder=6)
+                ax.scatter(
+                    *p[-1],
+                    s=110 if touching else 40,
+                    c=LEG_COLORS[leg] if touching else "none",
+                    edgecolors=LEG_COLORS[leg],
+                    linewidths=1.8,
+                    zorder=6,
+                )
             ax.scatter(*base, s=150, c=BASE_COLOR, marker="s", zorder=7)
 
             r = 0.52
@@ -171,8 +199,9 @@ def main():
             ax.set_box_aspect((1, 1, 0.62))
             ax.view_init(elev=args.elev, azim=args.azim)
             ax.set_axis_off()
-            ax.set_title(f"{terrain}   step {t}   x={base[0]:.2f} m",
-                         color="#e8e8e8", fontsize=10, pad=2)
+            ax.set_title(
+                f"{terrain}   step {t}   x={base[0]:.2f} m", color="#e8e8e8", fontsize=10, pad=2
+            )
 
             # live expert gates
             if gates is not None:

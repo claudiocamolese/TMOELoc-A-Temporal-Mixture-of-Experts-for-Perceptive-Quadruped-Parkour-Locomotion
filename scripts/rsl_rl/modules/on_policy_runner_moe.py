@@ -7,7 +7,6 @@ distillation runner; only the student architecture changes.
 from __future__ import annotations
 
 import os
-import statistics
 import time
 from collections import deque
 from copy import copy
@@ -18,14 +17,12 @@ from rsl_rl.utils import store_code_state
 
 from .distillation_moe import DistillationMoE
 from .on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-
-# proprioception slice holding the (env_class != flat, env_class == flat) one-hot.
-ENV_CLASS_SLICE = slice(11, 13)
-# proprioception slice holding (delta_yaw, delta_next_yaw) -- the student must predict these.
-YAW_SLICE = slice(6, 8)
+from .student_observations import ENV_CLASS_SLICE, PERCEPTION_INTERVAL, YAW_SLICE
 
 
 class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
+    """Collect student trajectories and supervise context and actions with a frozen teacher."""
+
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         super().__init__(env, train_cfg, log_dir=log_dir, device=device)
         self.zero_env_class = bool(self.depth_encoder_cfg.get("zero_env_class", True))
@@ -38,6 +35,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
         self.learn = self.learn_vision_moe
 
     def learn_vision_moe(self, num_learning_iterations, init_at_random_ep_len=False):  # noqa: C901
+        """Alternate on-student rollouts with one joint distillation update per iteration."""
         if not isinstance(self.alg, DistillationMoE):
             raise TypeError(f"The algorithm must be DistillationMoE, got {type(self.alg)}")
         self.alg: DistillationMoE
@@ -118,10 +116,14 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             fall_log: list[torch.Tensor] = []
             delta_yaw_ok_buffer = []
             # divergence diagnostics, accumulated on device to avoid per-step syncs
-            diag = {k: torch.zeros((), device=self.device) for k in ("act_s", "act_t", "ctx", "obs")}
+            diag = {
+                k: torch.zeros((), device=self.device) for k in ("act_s", "act_t", "ctx", "obs")
+            }
 
             for _ in range(self.depth_encoder_cfg["num_steps_per_env"]):
-                is_perception_step = self.env.unwrapped.common_step_counter % 5 == 0
+                is_perception_step = (
+                    self.env.unwrapped.common_step_counter % PERCEPTION_INTERVAL == 0
+                )
 
                 # ---- student-visible proprioception -------------------------
                 prop_ctx = obs[:, :num_prop].clone()
@@ -167,12 +169,16 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
                 # ---- teacher action on the untouched privileged observation --
                 with torch.no_grad():
-                    actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
+                    actions_teacher = self.alg.policy.act_inference(
+                        obs, hist_encoding=True, scandots_latent=None
+                    )
                     # Regress the action the environment will actually execute.
                     # Beyond this clip the teacher's output is unbounded garbage
                     # produced from saturated observations, and identical in
                     # effect to the clipped value.
-                    action_target = actions_teacher.clamp(-self.action_target_clip, self.action_target_clip)
+                    action_target = actions_teacher.clamp(
+                        -self.action_target_clip, self.action_target_clip
+                    )
                     delta_yaw_ok_buffer.append(
                         torch.nonzero(delta_yaw_ok).size(0) / delta_yaw_ok.numel()
                     )
@@ -248,14 +254,16 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 # rollout; beyond that a quiet window cannot be told apart from
                 # an unobserved one, so those steps are masked out rather than
                 # counted as negatives.
-                falls = torch.stack(fall_log)                       # (T, num_envs)
+                falls = torch.stack(fall_log)  # (T, num_envs)
                 T = falls.shape[0]
                 labels, valids = [], []
                 for t in range(T):
                     hi = t + risk_horizon
                     ok = hi <= T
-                    window = falls[t + risk_lead: hi] if ok else falls[0:0]
-                    labels.append(window.any(dim=0) if window.numel() else torch.zeros_like(falls[0]))
+                    window = falls[t + risk_lead : hi] if ok else falls[0:0]
+                    labels.append(
+                        window.any(dim=0) if window.numel() else torch.zeros_like(falls[0])
+                    )
                     valids.append(torch.full_like(falls[0], ok))
                 buffers["risk_label"] = labels
                 buffers["risk_valid"] = valids
@@ -288,8 +296,14 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
                 self.log_vision(locals())
                 if (
                     (it - self.start_learning_iteration < 2500 and it % self.save_interval == 0)
-                    or (it - self.start_learning_iteration < 5000 and it % (2 * self.save_interval) == 0)
-                    or (it - self.start_learning_iteration >= 5000 and it % (5 * self.save_interval) == 0)
+                    or (
+                        it - self.start_learning_iteration < 5000
+                        and it % (2 * self.save_interval) == 0
+                    )
+                    or (
+                        it - self.start_learning_iteration >= 5000
+                        and it % (5 * self.save_interval) == 0
+                    )
                 ):
                     self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
             ep_infos.clear()
@@ -306,6 +320,7 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
     # ------------------------------------------------------------------ utils
 
     def _init_writer(self):
+        """Lazily create the configured metrics writer and record the run configuration."""
         if self.log_dir is None or self.writer is not None or self.disable_logs:
             return
         self.logger_type = self.cfg.get("logger", "tensorboard").lower()
@@ -324,9 +339,12 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
 
             self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
         else:
-            raise ValueError("Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'.")
+            raise ValueError(
+                "Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'."
+            )
 
     def save(self, path: str, infos=None):
+        """Save teacher, estimator, student, and optimizer state using the released key names."""
         saved_dict = {
             "model_state_dict": self.alg.policy.state_dict(),
             "estimator_state_dict": self.alg.estimator.state_dict(),
@@ -339,12 +357,15 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
         }
         if self.empirical_normalization:
             saved_dict["obs_norm_state_dict"] = self.obs_normalizer.state_dict()
-            saved_dict["privileged_obs_norm_state_dict"] = self.privileged_obs_normalizer.state_dict()
+            saved_dict["privileged_obs_norm_state_dict"] = (
+                self.privileged_obs_normalizer.state_dict()
+            )
         torch.save(saved_dict, path)
         if self.logger_type in ["neptune", "wandb"] and not self.disable_logs:
             self.writer.save_model(path, self.current_learning_iteration)
 
     def load(self, path: str, load_optimizer: bool = True):
+        """Load a teacher or student checkpoint; warm-start experts only for a fresh student."""
         loaded_dict = torch.load(path, weights_only=False)
         # the teacher always comes from a plain PPO checkpoint
         self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
@@ -361,12 +382,15 @@ class OnPolicyRunnerMoE(OnPolicyRunnerWithExtractor):
             # on a resume this would overwrite trained weights with the teacher's.
             self.alg.warm_start_experts_from_teacher()
         if load_optimizer and "depth_actor_optimizer_state_dict" in loaded_dict:
-            self.alg.depth_actor_optimizer.load_state_dict(loaded_dict["depth_actor_optimizer_state_dict"])
+            self.alg.depth_actor_optimizer.load_state_dict(
+                loaded_dict["depth_actor_optimizer_state_dict"]
+            )
         if "depth_actor_state_dict" in loaded_dict:
             self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 
     def get_inference_depth_policy(self, device=None):
+        """Return the student actor in evaluation mode on the requested device."""
         self.alg.depth_encoder.eval()
         self.alg.depth_actor.eval()
         if device is not None:

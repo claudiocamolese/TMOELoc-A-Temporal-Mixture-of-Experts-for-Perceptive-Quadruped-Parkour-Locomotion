@@ -2,19 +2,27 @@
 
 Every command in this project, what it does, and what it leaves behind.
 
-All paths are relative to the repo root. Everything sources `scripts/launch_env.sh`
-first, which sets three things that are not optional on this machine:
+All paths are relative to the repo root. Activate the Isaac Lab environment
+first. The wrappers source `scripts/launch_env.sh`, which selects the active
+Python interpreter, supplies repository-relative defaults, and accepts overrides:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0      # an empty value makes Isaac Sim fall back to CPU and abort
-export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda-12.8/lib64
 export OMNI_KIT_ACCEPT_EULA=YES
-export PYTHON_BIN=/home/olaf/miniconda3/envs/parkour/bin/python
-export TEACHER_CKPT=.../pretrained/teacher/2025-08-13_05-15-58/model_49999.pt
+export PYTHON_BIN="$(command -v python)"
+export TEACHER_CKPT=/absolute/path/to/model_49999.pt
+source scripts/launch_env.sh
 ```
 
 The wrapper scripts (`run_experiments.sh`, `make_video.sh`, `run_analysis.sh`)
 source it themselves. If you call a Python script directly, `source` it first.
+The launcher preserves an existing `LD_LIBRARY_PATH`, prepends optional WSL/CUDA
+directories only when present, and honors a nonempty `CUDA_VISIBLE_DEVICES`.
+`CUDA_VISIBLE_DEVICES_OVERRIDE` takes precedence when set. Checkpoint selection
+and iteration counting are shared in `scripts/lib/experiment_helpers.sh`.
+
+For source checks and simulator-free regression tests, see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ---
 

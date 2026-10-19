@@ -17,8 +17,9 @@
 #          remaining candidate is the warm-started actor, which is what explains
 #          the baseline's early lead
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 LOG=logs/decide_4k.log
 TARGET=4000
@@ -29,7 +30,7 @@ log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 
 log "=== waiting for the risk run to reach $TARGET ==="
 while true; do
-  it=$(grep -c "Learning iteration" "$RISK_CONSOLE" 2>/dev/null || echo 0)
+  it=$(count_training_iterations "$RISK_CONSOLE")
   [ "$it" -ge "$TARGET" ] && { log "risk run reached $it"; break; }
   pgrep -f "python.*train\.py.*StudentMoERisk" >/dev/null 2>&1 || {
     log "ALERT: risk run died at $it; deciding on what exists"; break; }
@@ -37,9 +38,9 @@ while true; do
 done
 sleep 60
 
-RISK_CKPT=$(ls -1 logs/rsl_rl/unitree_go2_parkour_moe_risk/*/model_4000.pt 2>/dev/null | head -1)
-MOE_CKPT=$(ls -1 logs/rsl_rl/unitree_go2_parkour_moe/*/model_4000.pt 2>/dev/null | head -1)
-[ -f "$RISK_CKPT" ] || RISK_CKPT=$(ls -1t logs/rsl_rl/unitree_go2_parkour_moe_risk/*/model_*.pt 2>/dev/null | head -1)
+RISK_CKPT=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe_risk/*/model_4000.pt" first)
+MOE_CKPT=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe/*/model_4000.pt" first)
+[ -f "$RISK_CKPT" ] || RISK_CKPT=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe_risk/*/model_*.pt" newest)
 [ -f "$RISK_CKPT" ] && [ -f "$MOE_CKPT" ] || { log "FATAL: missing checkpoint (risk=$RISK_CKPT moe=$MOE_CKPT)"; exit 1; }
 OUT=logs/decide_4k; mkdir -p "$OUT"
 log "risk: $RISK_CKPT"
@@ -53,13 +54,16 @@ for pair in "risk4k:$RISK_CKPT:Isaac-Extreme-Parkour-StudentMoERisk-Unitree-Go2-
             "moe4k:$MOE_CKPT:Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-Eval-v0"; do
   tag=${pair%%:*}; rest=${pair#*:}; ck=${rest%%:*}; TASK=${rest#*:}
   log "eval $tag"
-  nice -n 10 timeout -k 60 3600 "$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py \
+  if nice -n 10 timeout -k 60 3600 "$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py \
     --task "$TASK" --checkpoint "$ck" --num_envs "$ENVS" --steps "$STEPS" \
-    --tag "$tag" --out_dir "$OUT" --headless >> "$LOG" 2>&1 \
-    && log "  ok" || log "  FAILED"
+    --tag "$tag" --out_dir "$OUT" --headless >> "$LOG" 2>&1; then
+    log "  ok"
+  else
+    log "  FAILED"
+  fi
 done
 
-VERDICT=$("$PYTHON_BIN" - "$OUT" <<'PY'
+VERDICT=$("$PYTHON_BIN" - "$OUT" 2>>"$LOG" <<'PY'
 import json, math, sys, os
 o=sys.argv[1]
 try:
@@ -83,7 +87,7 @@ better = (dp >= sp) or (dh <= -sh)
 worse  = (dp <= -sp) or (dh >= sh)
 print("KEEP" if (better and not worse) else "SWITCH")
 PY
-2>>"$LOG")
+)
 log "VERDICT: $VERDICT"
 
 # Fail SAFE, not open. The first version treated anything that was not
@@ -92,8 +96,11 @@ log "VERDICT: $VERDICT"
 # terminate anything.
 if [ "$VERDICT" != "SWITCH" ]; then
   log "verdict is '$VERDICT' -- not an explicit SWITCH, so nothing is killed."
-  [ "$VERDICT" = "KEEP" ] && log "keeping the failure-aware run." \
-                          || log "ALERT: the comparison did not produce a verdict; needs a human."
+  if [ "$VERDICT" = "KEEP" ]; then
+    log "keeping the failure-aware run."
+  else
+    log "ALERT: the comparison did not produce a verdict; needs a human."
+  fi
   exit 0
 fi
 

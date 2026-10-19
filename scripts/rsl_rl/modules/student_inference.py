@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import torch
 
-# see on_policy_runner_moe for the layout of the 53-dim proprioception vector
-YAW_SLICE = slice(6, 8)
-ENV_CLASS_SLICE = slice(11, 13)
+from .student_observations import ENV_CLASS_SLICE, YAW_SLICE
 
 
 class TeacherPolicy:
@@ -53,14 +51,19 @@ class TeacherPolicy:
         self.policy.eval()
 
     def force_expert(self, index):
+        """Reject expert selection because the privileged teacher has no mixture."""
         if index is not None:
             raise ValueError("--force_expert does not apply to the teacher.")
 
     def reset(self, dones=None):
+        """Accept the shared reset interface; the teacher owns no recurrent state here."""
         pass
 
     @torch.no_grad()
-    def act(self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool) -> torch.Tensor:
+    def act(
+        self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool
+    ) -> torch.Tensor:
+        """Query the privileged teacher and expose a context-shaped diagnostic sample."""
         if self.use_estimator and self.estimator is not None:
             obs[:, self.priv_explicit_slice] = self.estimator.inference(obs[:, : self.num_prop])
         actions = self.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
@@ -95,6 +98,8 @@ class StudentPolicy:
         )
         self.zero_env_class = bool(enc_cfg.get("zero_env_class", True))
         self.vel_source = vel_source or enc_cfg.get("vel_source", "true")
+        if self.vel_source not in ("true", "predicted"):
+            raise ValueError(f"Unknown velocity source: {self.vel_source!r}")
 
         self.is_moe = self.variant == "DistillationMoE"
         self.forced_expert: int | None = None
@@ -122,6 +127,8 @@ class StudentPolicy:
         """Pin routing to a single expert, to check what it does on its own."""
         if index is not None and not self.is_moe:
             raise ValueError("--force_expert only applies to the Mixture-of-Experts student.")
+        if index is not None and not 0 <= index < self.depth_actor.num_experts:
+            raise ValueError(f"Expert index must be in [0, {self.depth_actor.num_experts})")
         self.forced_expert = index
 
     def set_intervention(self, name: str) -> None:
@@ -143,6 +150,18 @@ class StudentPolicy:
           top1           gates := argmax     sparser than trained
           expert{0..3}   one expert alone    what a single expert can do
         """
+        valid = {
+            "none",
+            "zero_context",
+            "no_depth",
+            "uniform_attn",
+            "uniform_gates",
+            "dense",
+            "top1",
+        }
+        valid.update(f"expert{i}" for i in range(getattr(self.depth_actor, "num_experts", 0)))
+        if name not in valid:
+            raise ValueError(f"Unknown intervention {name!r}; choose one of {sorted(valid)}")
         self.zero_depth = name == "no_depth"
         self.zero_context = name == "zero_context"
         for blk in getattr(self.depth_encoder, "blocks", []):
@@ -167,16 +186,18 @@ class StudentPolicy:
         d = torch.as_tensor(directions, dtype=torch.float32, device=self.device)
         if d.ndim == 1:
             d = d[None, :]
-        q, _ = torch.linalg.qr(d.T)          # (context_dim, k) orthonormal columns
+        q, _ = torch.linalg.qr(d.T)  # (context_dim, k) orthonormal columns
         self.ablation_basis = q
         print(f"[INFO]: ablating a {q.shape[1]}-dimensional subspace of the {q.shape[0]}-d context")
 
     def _apply_ablation(self, context: torch.Tensor) -> torch.Tensor:
+        """Remove the selected orthonormal context subspace without changing other directions."""
         if self.ablation_basis is None:
             return context
         return context - (context @ self.ablation_basis) @ self.ablation_basis.T
 
     def reset(self, dones=None) -> None:
+        """Clear terminated environments in the encoder and, for MoE, the cached gates."""
         if dones is None:
             return
         # Both students clear their temporal state on episode boundaries: the
@@ -187,6 +208,7 @@ class StudentPolicy:
             self.depth_actor.reset(dones)
 
     def _student_prop(self, obs: torch.Tensor, blank_yaw: bool) -> torch.Tensor:
+        """Clone proprioception and mask oracle heading or terrain class as requested."""
         prop = obs[:, : self.num_prop].clone()
         if blank_yaw:
             prop[:, YAW_SLICE] = 0.0
@@ -197,7 +219,10 @@ class StudentPolicy:
     # ---------------------------------------------------------------- forward
 
     @torch.no_grad()
-    def act(self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool) -> torch.Tensor:
+    def act(
+        self, obs: torch.Tensor, depth_image: torch.Tensor, is_perception_step: bool
+    ) -> torch.Tensor:
+        """Update perception when due, substitute predicted heading, and run the student actor."""
         prop_ctx = self._student_prop(obs, blank_yaw=True)
         if self.zero_depth:
             depth_image = torch.zeros_like(depth_image)
@@ -205,7 +230,9 @@ class StudentPolicy:
         if self.is_moe:
             ctrl_rate = getattr(self.depth_encoder, "context_rate", "perception") == "control"
             if ctrl_rate or is_perception_step or self.context is None:
-                out = self.depth_encoder(depth_image, prop_ctx, is_perception_step=is_perception_step)
+                out = self.depth_encoder(
+                    depth_image, prop_ctx, is_perception_step=is_perception_step
+                )
                 self.context = self._apply_ablation(out["context"])
                 if self.zero_context:
                     self.context = torch.zeros_like(self.context)

@@ -33,6 +33,7 @@ PROP_BLOCKS = [
 
 
 def main():
+    """Inspect router input weights and expert diversity without launching the simulator."""
     ap = argparse.ArgumentParser()
     ap.add_argument("checkpoint")
     ap.add_argument("--num_prop", type=int, default=53)
@@ -46,25 +47,31 @@ def main():
     w_in = sd["router.0.weight"]  # (hidden, in_features)
     in_features = w_in.shape[1]
     n_prop, n_ctx = args.num_prop, args.context_dim
-    n_vel = in_features - n_prop - n_ctx
 
     # Mean |w| per input unit, so blocks of different width stay comparable.
     per_unit = w_in.abs().mean(0)
-    groups = [("proprioception", 0, n_prop), ("context c_t", n_prop, n_prop + n_ctx),
-              ("base velocity", n_prop + n_ctx, in_features)]
+    groups = [
+        ("proprioception", 0, n_prop),
+        ("context c_t", n_prop, n_prop + n_ctx),
+        ("base velocity", n_prop + n_ctx, in_features),
+    ]
     print("\n=== what the router reads (mean |weight| per input unit) ===")
     total = sum(float(per_unit[a:b].sum()) for _, a, b in groups)
     for name, a, b in groups:
         share = 100 * float(per_unit[a:b].sum()) / total
-        print(f"  {name:<16} {float(per_unit[a:b].mean()):.4f} per unit   {share:5.1f}% of total influence")
+        print(
+            f"  {name:<16} {float(per_unit[a:b].mean()):.4f} per unit   {share:5.1f}% of total influence"
+        )
 
     print("\n=== within proprioception ===")
     for name, a, b in PROP_BLOCKS:
         print(f"  {name:<20} {float(per_unit[a:b].mean()):.4f}")
 
     # ------------------------------------------------ expert distinctness
-    ws = [sd[f"experts.weights.{i}"] for i in range(len(
-        [k for k in sd if k.startswith("experts.weights.")]))]
+    ws = [
+        sd[f"experts.weights.{i}"]
+        for i in range(len([k for k in sd if k.startswith("experts.weights.")]))
+    ]
     bs = [sd[f"experts.biases.{i}"] for i in range(len(ws))]
     k = ws[0].shape[0]
     print(f"\n=== expert distinctness ({k} experts) ===")
@@ -91,8 +98,10 @@ def main():
     for i in range(k):
         print(f"  E{i}  " + "".join(f"{corr[i, j]:8.3f}" for j in range(k)))
     off = corr[~np.eye(k, dtype=bool)]
-    print(f"mean off-diagonal correlation: {off.mean():.3f}  "
-          f"({'experts are near-copies' if off.mean() > 0.9 else 'experts compute different functions'})")
+    print(
+        f"mean off-diagonal correlation: {off.mean():.3f}  "
+        f"({'experts are near-copies' if off.mean() > 0.9 else 'experts compute different functions'})"
+    )
 
     scale = out.reshape(k, -1).std(1).numpy()
     print("\nper-expert output scale (std over probe inputs):")
@@ -101,8 +110,20 @@ def main():
 
     # Which joints does each expert move most? Rows are experts, columns joints.
     per_joint = out.std(1).numpy()  # (k, 12)
-    names = ["FL_hip", "FL_thigh", "FL_calf", "FR_hip", "FR_thigh", "FR_calf",
-             "RL_hip", "RL_thigh", "RL_calf", "RR_hip", "RR_thigh", "RR_calf"]
+    names = [
+        "FL_hip",
+        "FL_thigh",
+        "FL_calf",
+        "FR_hip",
+        "FR_thigh",
+        "FR_calf",
+        "RL_hip",
+        "RL_thigh",
+        "RL_calf",
+        "RR_hip",
+        "RR_thigh",
+        "RR_calf",
+    ]
     print("\nper-expert output magnitude by joint (relative within expert):")
     print(f"  {'joint':<10}" + "".join(f"{'E' + str(i):>8}" for i in range(k)))
     rel = per_joint / (per_joint.sum(1, keepdims=True) + 1e-8)

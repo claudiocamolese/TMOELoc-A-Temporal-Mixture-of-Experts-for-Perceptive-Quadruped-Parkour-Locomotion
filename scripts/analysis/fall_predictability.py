@@ -47,10 +47,10 @@ def label_falls(dones: np.ndarray, goal: np.ndarray, ctx_stride: int, horizon: i
     drop = np.zeros((n_ctx, N), dtype=bool)
     for i in range(n_ctx):
         t = i * ctx_stride
-        y[i] = fall[t + lead: t + horizon].any(axis=0)
+        y[i] = fall[t + lead : t + horizon].any(axis=0)
         # samples inside the excluded lead window are neither positive nor a
         # clean negative -- the fall is already under way -- so drop them
-        drop[i] = fall[t: t + lead].any(axis=0) if lead else False
+        drop[i] = fall[t : t + lead].any(axis=0) if lead else False
     return y, drop
 
 
@@ -73,7 +73,7 @@ def fit(X, y, groups, seed=0):
     w = np.zeros(Xtr.shape[1])
     ytr = y[tr].astype(float)
     lam = 1.0
-    for _ in range(60):                      # Newton steps on the ridge objective
+    for _ in range(60):  # Newton steps on the ridge objective
         p = 1.0 / (1.0 + np.exp(-Xtr @ w))
         g = Xtr.T @ (p - ytr) + lam * w
         s = np.clip(p * (1 - p), 1e-6, None)
@@ -94,19 +94,22 @@ def fit(X, y, groups, seed=0):
 
 
 def main():
+    """Compare grouped fall-prediction AUC against shuffled-context controls."""
     ap = argparse.ArgumentParser()
     ap.add_argument("trace")
     ap.add_argument("--horizon", type=int, default=50, help="control steps ahead (50 = 1.0 s)")
     args = ap.parse_args()
 
     d = np.load(args.trace, allow_pickle=True)
-    ctx = d["context"].astype(np.float32)          # (n_ctx, N, C)
-    dones = d["dones"].astype(bool)                # (T, N)
+    ctx = d["context"].astype(np.float32)  # (n_ctx, N, C)
+    dones = d["dones"].astype(bool)  # (T, N)
     goal = d["goal_idx"].astype(int)
     stride = int(round(dones.shape[0] / ctx.shape[0]))
 
-    print(f"context every {stride} control steps, horizon {args.horizon} steps "
-          f"({args.horizon * 0.02:.1f} s)")
+    print(
+        f"context every {stride} control steps, horizon {args.horizon} steps "
+        f"({args.horizon * 0.02:.1f} s)"
+    )
 
     print(f"{'lead':>6}{'horizon':>9}{'positives':>11}{'AUC':>8}{'shuffled':>10}")
     for lead, h in [(0, 25), (0, 50), (25, 75), (50, 100), (75, 125), (100, 150)]:

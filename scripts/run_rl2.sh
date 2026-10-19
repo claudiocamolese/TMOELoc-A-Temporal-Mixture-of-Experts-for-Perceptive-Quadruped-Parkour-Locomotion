@@ -18,8 +18,9 @@
 # (2.54 against 2.46 courses per env-minute), so spending a twelve-hour arm to
 # sharpen it rather than to measure top-2 end to end is the worse trade.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 LOG=logs/rl2.log
 ITERS=20000
 # Measured over the first 800 iterations of the discarded attempt: the sampled KL
@@ -37,8 +38,8 @@ log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 free_mb(){ echo $(( $(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits) \
                   - $(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) )); }
 
-TOP2=$(ls -1 logs/rsl_rl/unitree_go2_parkour_moe/*/model_14999.pt 2>/dev/null | head -1)
-BASE=$(ls -1t logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt 2>/dev/null | head -1)
+TOP2=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe/*/model_14999.pt" first)
+BASE=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt" newest)
 [ -f "$TOP2" ] || { log "FATAL: no top-2 checkpoint"; exit 1; }
 
 log "=== arm B: top-2 mixture, native top-2 routing, $ITERS iterations ==="

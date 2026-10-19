@@ -30,9 +30,9 @@ import os
 
 import numpy as np
 
-NUM_GOALS = 8         # terrain_generator_cfg.num_goals
-CONTROL_DT = 0.02     # 50 Hz control step
-MAX_EPISODE_STEPS = 1000   # episode_length_s 20.0 / CONTROL_DT, EVAL config
+NUM_GOALS = 8  # terrain_generator_cfg.num_goals
+CONTROL_DT = 0.02  # 50 Hz control step
+MAX_EPISODE_STEPS = 1000  # episode_length_s 20.0 / CONTROL_DT, EVAL config
 
 
 def episode_table(dones: np.ndarray, goal: np.ndarray):
@@ -51,13 +51,30 @@ def episode_table(dones: np.ndarray, goal: np.ndarray):
         start = 0
         for t in np.flatnonzero(dones[:, n]):
             reached = int(goal[t, n])
-            rows.append(dict(env=n, t0=start, t1=int(t), steps=int(t) - start + 1,
-                             goal=reached, censored=False,
-                             success=reached >= NUM_GOALS - 1))
+            rows.append(
+                dict(
+                    env=n,
+                    t0=start,
+                    t1=int(t),
+                    steps=int(t) - start + 1,
+                    goal=reached,
+                    censored=False,
+                    success=reached >= NUM_GOALS - 1,
+                )
+            )
             start = int(t) + 1
-        if start < T:                                  # still running at the horizon
-            rows.append(dict(env=n, t0=start, t1=T - 1, steps=T - start,
-                             goal=int(goal[-1, n]), censored=True, success=False))
+        if start < T:  # still running at the horizon
+            rows.append(
+                dict(
+                    env=n,
+                    t0=start,
+                    t1=T - 1,
+                    steps=T - start,
+                    goal=int(goal[-1, n]),
+                    censored=True,
+                    success=False,
+                )
+            )
     return rows
 
 
@@ -82,18 +99,21 @@ def bootstrap_over_envs(rows, stat, n_boot=2000, seed=0):
 
 
 def _goals_per_min(rows):
+    """Compute progress per minute using all observed trajectory exposure."""
     g = sum(r["goal"] for r in rows)
     s = sum(r["steps"] for r in rows)
     return g / (s * CONTROL_DT) * 60.0
 
 
 def _fall_hazard(rows):
+    """Compute falls per 1,000 observed control steps, including censored exposure."""
     f = sum(1 for r in rows if not r["censored"] and not r["success"])
     s = sum(r["steps"] for r in rows)
     return f / s * 1000.0
 
 
 def summarise(rows, label="", boot=0):
+    """Aggregate episode segments and optionally bootstrap uncertainty over environments."""
     steps = np.array([r["steps"] for r in rows], dtype=float)
     goals = np.array([r["goal"] for r in rows], dtype=float)
     cens = np.array([r["censored"] for r in rows])
@@ -115,7 +135,9 @@ def summarise(rows, label="", boot=0):
         "fall_per_min": float(fall.sum() / exposure_s * 60.0),
         "goals_per_min": float(progress_rate * 60.0),
         # what the old metric reported: mean over terminated segments only
-        "mxd_terminated_only": float((goals[~cens] / NUM_GOALS).mean()) if (~cens).any() else float("nan"),
+        "mxd_terminated_only": float((goals[~cens] / NUM_GOALS).mean())
+        if (~cens).any()
+        else float("nan"),
         # every segment, censored ones at the progress they had reached
         "mxd_all_segments": float((goals / NUM_GOALS).mean()),
         "mxd_all_sem": float((goals / NUM_GOALS).std(ddof=1) / np.sqrt(len(rows))),
@@ -126,7 +148,9 @@ def summarise(rows, label="", boot=0):
     out["fall_hazard_per_1k_steps"] = float(fall.sum() / steps.sum() * 1000.0)
     out["success_share_of_ends"] = float(succ.sum() / max((~cens).sum(), 1))
     if boot:
-        out["goals_per_min_se"], out["goals_per_min_ci"] = bootstrap_over_envs(rows, _goals_per_min, boot)
+        out["goals_per_min_se"], out["goals_per_min_ci"] = bootstrap_over_envs(
+            rows, _goals_per_min, boot
+        )
         out["fall_hazard_se"], out["fall_hazard_ci"] = bootstrap_over_envs(rows, _fall_hazard, boot)
     if label:
         out["trace"] = label
@@ -144,15 +168,20 @@ def per_terrain(rows, terrain, vocab):
 
 
 def main():
+    """Load evaluation traces and print or save matched-horizon traversal statistics."""
     ap = argparse.ArgumentParser()
     ap.add_argument("traces", nargs="*")
     ap.add_argument("--glob", default=None)
     ap.add_argument("--out", default=None, help="write the summary as json")
     ap.add_argument("--per-terrain", action="store_true")
     ap.add_argument("--boot", type=int, default=2000, help="bootstrap resamples; 0 disables")
-    ap.add_argument("--horizon", type=int, default=None,
-                    help="truncate every trace to this many steps, so the censoring "
-                         "fraction is identical across policies")
+    ap.add_argument(
+        "--horizon",
+        type=int,
+        default=None,
+        help="truncate every trace to this many steps, so the censoring "
+        "fraction is identical across policies",
+    )
     args = ap.parse_args()
 
     paths = list(args.traces)
@@ -176,10 +205,14 @@ def main():
         s = summarise(rows, name, boot=args.boot)
         report[p] = s
         if args.per_terrain and "terrain" in d.files:
-            report[p]["per_terrain"] = per_terrain(rows, d["terrain"].astype(int), d["terrain_vocab"])
+            report[p]["per_terrain"] = per_terrain(
+                rows, d["terrain"].astype(int), d["terrain_vocab"]
+            )
         T, N = dones.shape
-        print(f"\n=== {p}  ({T} steps x {N} envs, {T * CONTROL_DT:.0f}s per env, "
-              f"episode cap {MAX_EPISODE_STEPS} steps) ===")
+        print(
+            f"\n=== {p}  ({T} steps x {N} envs, {T * CONTROL_DT:.0f}s per env, "
+            f"episode cap {MAX_EPISODE_STEPS} steps) ==="
+        )
 
     if not report:
         raise SystemExit("nothing to report")
@@ -202,10 +235,17 @@ def main():
         print(f"{lbl:<28}" + "".join(fmt.format(r[k]).rjust(w) for r in report.values()))
     if args.boot:
         print()
-        for k, se, lbl, fmt in [("goals_per_min", "goals_per_min_se", "goals/env-min +- boot SE", "{:.2f}"),
-                                ("fall_hazard_per_1k_steps", "fall_hazard_se", "fall hazard +- boot SE", "{:.3f}")]:
-            print(f"{lbl:<28}" + "".join(
-                (fmt.format(r[k]) + " +- " + fmt.format(r[se])).rjust(w) for r in report.values()))
+        for k, se, lbl, fmt in [
+            ("goals_per_min", "goals_per_min_se", "goals/env-min +- boot SE", "{:.2f}"),
+            ("fall_hazard_per_1k_steps", "fall_hazard_se", "fall hazard +- boot SE", "{:.3f}"),
+        ]:
+            print(
+                f"{lbl:<28}"
+                + "".join(
+                    (fmt.format(r[k]) + " +- " + fmt.format(r[se])).rjust(w)
+                    for r in report.values()
+                )
+            )
     print("\nMXD ceiling is 7/8 = 0.875: the goal counter reads 7 on the step the")
     print("cutoff fires, so a flawless run scores 0.875, not 1.0.")
 

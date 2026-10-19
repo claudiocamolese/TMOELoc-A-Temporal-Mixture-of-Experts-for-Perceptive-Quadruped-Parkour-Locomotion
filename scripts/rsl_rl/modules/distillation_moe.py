@@ -4,11 +4,12 @@ Single joint phase (no separate context pre-training):
 
     L = la * L_action + ly * L_yaw
       + lt * L_terrain + ld * L_dyn + lv * L_vel
-      + lb * L_balance + ls * L_smooth
+      + lb * L_balance + ls * L_smooth + lz * L_z + lr * L_risk
 
-``L_terrain`` / ``L_dyn`` regress the teacher's own scan-encoder and
-privileged-encoder latents, so a single context vector has to carry both the
-terrain geometry and the hidden robot dynamics.
+Terrain targets are the teacher's scan latent. Dynamics targets are standardized
+physical parameters by default, with teacher-latent supervision retained as an
+explicit alternative. The optional risk head predicts future falls from rollout
+terminations; its detached output can reweight the action imitation objective.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ from .optim_utils import RunningStandardiser, SpikeGuard, warmup_cosine_lr
 
 
 class DistillationMoE:
+    """Train a temporal encoder and routed motor actor against a frozen teacher."""
+
     policy: ActorCriticRMA
 
     def __init__(
@@ -152,12 +155,14 @@ class DistillationMoE:
                 # FusedExperts stores (num_experts, in, out); nn.Linear is (out, in)
                 if tuple(w.shape[1:]) != (src.in_features, src.out_features):
                     break
-                w.copy_(src.weight.data.t().unsqueeze(0).expand_as(w))
-                b.copy_(src.bias.data.view(1, 1, -1).expand_as(b))
+                w.copy_(src.weight.detach().t().unsqueeze(0).expand_as(w))
+                b.copy_(src.bias.detach().view(1, 1, -1).expand_as(b))
                 copied += 1
-        print(f"[INFO]: warm-started {copied} expert layer(s) from the teacher actor "
-              f"({'x'.join(str(d) for d in (self.depth_actor.in_features,))} -> ... -> "
-              f"{linears[-1].out_features})")
+        print(
+            f"[INFO]: warm-started {copied} expert layer(s) from the teacher actor "
+            f"({'x'.join(str(d) for d in (self.depth_actor.in_features,))} -> ... -> "
+            f"{linears[-1].out_features})"
+        )
         return copied > 0
 
     # ----------------------------------------------------------------- update
@@ -179,23 +184,32 @@ class DistillationMoE:
         """Apply the warmup/cosine learning-rate schedule for this iteration."""
         self._iteration = iteration
         self.learning_rate = warmup_cosine_lr(
-            iteration - self.schedule_offset, self.peak_lr, self.warmup_iters, self.total_iters, self.min_lr_ratio
+            iteration - self.schedule_offset,
+            self.peak_lr,
+            self.warmup_iters,
+            self.total_iters,
+            self.min_lr_ratio,
         )
         for group in self.depth_actor_optimizer.param_groups:
             group["lr"] = self.learning_rate
 
     def update_depth_actor(self, buffers: dict[str, list[torch.Tensor]]) -> dict[str, float]:
+        """Reduce rollout residuals, backpropagate the joint loss, and guard Adam updates."""
+
         def _l2(name: str) -> torch.Tensor:
+            """Average vector residual norms across collected timesteps."""
             if not buffers.get(name):
                 return torch.zeros((), device=self.device)
             return torch.cat(buffers[name], dim=0).norm(p=2, dim=1).mean()
 
         def _mse(name: str) -> torch.Tensor:
+            """Average squared elementwise residuals across collected timesteps."""
             if not buffers.get(name):
                 return torch.zeros((), device=self.device)
             return torch.cat(buffers[name], dim=0).pow(2).mean()
 
         def _scalar(name: str) -> torch.Tensor:
+            """Average scalar router regularizers sampled at perception updates."""
             if not buffers.get(name):
                 return torch.zeros((), device=self.device)
             return torch.stack(buffers[name]).mean()
@@ -295,13 +309,19 @@ class DistillationMoE:
     # ------------------------------------------------------------- multi-gpu
 
     def broadcast_parameters(self):
-        model_params = [self.policy.state_dict(), self.depth_encoder.state_dict(), self.depth_actor.state_dict()]
+        """Synchronize initial teacher and student state from distributed rank zero."""
+        model_params = [
+            self.policy.state_dict(),
+            self.depth_encoder.state_dict(),
+            self.depth_actor.state_dict(),
+        ]
         torch.distributed.broadcast_object_list(model_params, src=0)
         self.policy.load_state_dict(model_params[0])
         self.depth_encoder.load_state_dict(model_params[1])
         self.depth_actor.load_state_dict(model_params[2])
 
     def reduce_parameters(self):
+        """Average nonempty student gradients across participating distributed workers."""
         params = [*self.depth_actor.parameters(), *self.depth_encoder.parameters()]
         grads = [p.grad.view(-1) for p in params if p.grad is not None]
         all_grads = torch.cat(grads)
@@ -311,5 +331,5 @@ class DistillationMoE:
         for p in params:
             if p.grad is not None:
                 numel = p.numel()
-                p.grad.data.copy_(all_grads[offset : offset + numel].view_as(p.grad.data))
+                p.grad.copy_(all_grads[offset : offset + numel].view_as(p.grad))
                 offset += numel

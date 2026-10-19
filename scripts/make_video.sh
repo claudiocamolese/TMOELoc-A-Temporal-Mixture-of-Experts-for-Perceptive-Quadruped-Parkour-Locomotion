@@ -11,8 +11,9 @@
 # it only reads. Expect the training run to slow down for the couple of minutes
 # the simulator is up.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 NUM_ENVS=4
 STEPS=600
@@ -111,4 +112,4 @@ done
 
 echo
 echo "done. videos in $OUT:"
-ls -1sh "$OUT"/*.mp4 | sed 's/^/  /'
+find "$OUT" -maxdepth 1 -type f -name '*.mp4' -printf '  %k KiB %f\n' | sort

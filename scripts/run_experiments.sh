@@ -9,8 +9,9 @@
 # a large net loss on this machine (peak VRAM 31.9/32.6 GB and ~6x slower per
 # iteration), so they are chained instead.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 ITERS="${ITERS:-15000}"
 NUM_ENVS="${NUM_ENVS:-192}"
@@ -20,19 +21,21 @@ mkdir -p "$OUT"
 
 run () {
   local tag=$1 task=$2
+  local status=0
   echo "[$(date '+%F %T')] START $tag  (task=$task iters=$ITERS envs=$NUM_ENVS seed=$SEED)"
-  $PYTHON_BIN scripts/rsl_rl/train.py \
+  "$PYTHON_BIN" scripts/rsl_rl/train.py \
     --task "$task" \
     --seed "$SEED" \
     --headless \
     --num_envs "$NUM_ENVS" \
     --max_iterations "$ITERS" \
     --teacher_checkpoint "$TEACHER_CKPT" \
-    > "$OUT/$tag.log" 2>&1
-  echo "[$(date '+%F %T')] END   $tag  exit=$?"
+    > "$OUT/$tag.log" 2>&1 || status=$?
+  echo "[$(date '+%F %T')] END   $tag  exit=$status"
+  return "$status"
 }
 
-run moe      Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-v0
-run baseline Isaac-Extreme-Parkour-Student-Unitree-Go2-v0
+run moe      Isaac-Extreme-Parkour-StudentMoE-Unitree-Go2-v0 || exit "$?"
+run baseline Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 || exit "$?"
 
 echo "[$(date '+%F %T')] ALL RUNS FINISHED"

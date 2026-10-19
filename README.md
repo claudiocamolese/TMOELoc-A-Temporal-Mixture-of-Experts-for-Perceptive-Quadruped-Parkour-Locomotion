@@ -123,7 +123,7 @@ export CUDA_VISIBLE_DEVICES=0
 export PYTHON_BIN="$(command -v python)"
 ```
 
-The checkout includes weights and rollout archives. Wrappers in [RUNBOOK.md](RUNBOOK.md) source `scripts/launch_env.sh`, which contains the original workstation's paths and WSL loader settings. Adapt it before using wrappers elsewhere. The explicit commands below do not depend on that workstation layout.
+The checkout includes weights and rollout archives. Wrappers in [RUNBOOK.md](RUNBOOK.md) source `scripts/launch_env.sh`, which uses the active Python environment and accepts `PYTHON_BIN` and `TEACHER_CKPT` overrides. Optional WSL/CUDA loader paths are added only when present, preserving your existing library paths.
 
 ### 2. Run the released student
 
@@ -260,10 +260,12 @@ This is the configured budget, not a claim that the degraded diagnostic complete
 | [distillation_moe.py](scripts/rsl_rl/modules/distillation_moe.py) | Student initialization, losses, optimization |
 | [on_policy_runner_moe.py](scripts/rsl_rl/modules/on_policy_runner_moe.py) | Rollouts, teacher queries, heading replacement, checkpoints |
 | [student_inference.py](scripts/rsl_rl/modules/student_inference.py) | Teacher/student inference and interventions |
+| [ppo_utils.py](scripts/rsl_rl/modules/ppo_utils.py) | Simulator-independent critic, trajectory returns, and replay reshaping |
 | [rsl_student_moe_cfg.py](parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/rsl_student_moe_cfg.py) | Student variants and run settings |
 | [parkour_rl_cfg.py](parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/parkour_rl_cfg.py) | Architecture dimensions, routing, loss coefficients |
 | [scripts/analysis/](scripts/analysis/) | Metrics, attention, routing, probes, rendering |
 | [RUNBOOK.md](RUNBOOK.md) | Operational commands and workstation notes |
+| [Development guide](docs/DEVELOPMENT.md) | Ownership boundary, code conventions, and CPU regression checks |
 
 Released `slim/*.pt` checkpoints retain inference weights and omit optimizer state. They support playback, evaluation, and fresh optimization, but cannot restore the original Adam trajectory. Export newly trained student weights with:
 

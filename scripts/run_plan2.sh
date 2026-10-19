@@ -22,8 +22,9 @@
 # is measured at +2.77 +- 0.67 goals per env-minute for a fall cost inside the
 # noise floor, and it costs nothing here because PPO retrains the actor anyway.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 
 LOG=logs/plan2.log
 ENVS=128
@@ -34,7 +35,7 @@ free_mb(){ echo $(( $(nvidia-smi --query-gpu=memory.total --format=csv,noheader,
 
 log "=== waiting for the dense run to reach 15000 ==="
 while true; do
-  it=$(grep -c "Learning iteration" logs/run_console/moe_dense.log 2>/dev/null || echo 0)
+  it=$(count_training_iterations logs/run_console/moe_dense.log)
   [ "$it" -ge 15000 ] && { log "dense reached $it"; break; }
   pgrep -f "python.*train\.py.*StudentMoEDense" >/dev/null 2>&1 || {
     log "dense run gone at $it; selecting from what exists"; break; }
@@ -43,8 +44,8 @@ done
 sleep 120
 while [ "$(free_mb)" -lt 12000 ]; do sleep 60; done
 
-DENSE=$(ls -1t logs/rsl_rl/unitree_go2_parkour_moe_dense/*/model_*.pt 2>/dev/null | head -1)
-TOP2=$(ls -1 logs/rsl_rl/unitree_go2_parkour_moe/*/model_14999.pt 2>/dev/null | head -1)
+DENSE=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe_dense/*/model_*.pt" newest)
+TOP2=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe/*/model_14999.pt" first)
 OUT=logs/select_15k; mkdir -p "$OUT"
 log "dense: ${DENSE:-none}"
 log "top-2: ${TOP2:-none}"
@@ -55,10 +56,13 @@ for pair in "dense15k:$DENSE:Isaac-Extreme-Parkour-StudentMoEDense-Unitree-Go2-E
   tag=${pair%%:*}; rest=${pair#*:}; ck=${rest%%:*}; task=${rest#*:}
   [ -f "$ck" ] || { log "skip $tag: no checkpoint"; continue; }
   log "eval $tag"
-  nice -n 10 timeout -k 60 5400 "$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py \
+  if nice -n 10 timeout -k 60 5400 "$PYTHON_BIN" scripts/rsl_rl/evaluate_students.py \
     --task "$task" --checkpoint "$ck" --num_envs "$ENVS" --steps "$STEPS" \
-    --tag "$tag" --out_dir "$OUT" --headless >> "$LOG" 2>&1 \
-    && log "  ok" || log "  FAILED"
+    --tag "$tag" --out_dir "$OUT" --headless >> "$LOG" 2>&1; then
+    log "  ok"
+  else
+    log "  FAILED"
+  fi
 done
 
 WINNER=$("$PYTHON_BIN" - "$OUT" <<'PY' 2>>"$LOG"
@@ -103,7 +107,7 @@ setsid "$PYTHON_BIN" scripts/rsl_rl/finetune_rl.py \
 log "  exit $?"
 
 # ---- RL on the control ------------------------------------------------------
-BASE=$(ls -1t logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt 2>/dev/null | head -1)
+BASE=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt" newest)
 if [ -f "$BASE" ]; then
   log "STAGE: PPO fine-tuning of the GRU baseline (control)"
   setsid "$PYTHON_BIN" scripts/rsl_rl/finetune_rl.py \

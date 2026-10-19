@@ -29,11 +29,15 @@ import cli_args  # isort: skip
 
 parser = argparse.ArgumentParser(description="Play a trained parkour student.")
 parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument("--task", type=str, required=True, help="Name of the task.")
 parser.add_argument("--steps", type=int, default=600, help="Number of control steps to run.")
-parser.add_argument("--force_expert", type=int, default=None, help="Pin routing to this expert (MoE only).")
+parser.add_argument(
+    "--force_expert", type=int, default=None, help="Pin routing to this expert (MoE only)."
+)
 parser.add_argument("--vel_source", type=str, default=None, choices=["true", "predicted"])
-parser.add_argument("--out_dir", type=str, default=None, help="Where to write the video and the archive.")
+parser.add_argument(
+    "--out_dir", type=str, default=None, help="Where to write the video and the archive."
+)
 parser.add_argument("--no_video", action="store_true", default=False, help="Skip the depth video.")
 parser.add_argument("--fps", type=int, default=50, help="Playback frame rate of the depth video.")
 cli_args.add_rsl_rl_args(parser)  # provides --checkpoint, --logger, ...
@@ -41,6 +45,12 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 if not args_cli.checkpoint:
     parser.error("--checkpoint is required: point it at a trained student model_*.pt")
+if args_cli.num_envs < 1:
+    parser.error("--num_envs must be positive")
+if args_cli.steps < 1:
+    parser.error("--steps must be positive")
+if args_cli.fps < 1:
+    parser.error("--fps must be positive")
 sys.argv = [sys.argv[0]] + hydra_args
 
 app_launcher = AppLauncher(args_cli)
@@ -49,7 +59,6 @@ simulation_app = app_launcher.app
 import cv2  # noqa: E402
 import gymnasium as gym  # noqa: E402
 import numpy as np  # noqa: E402
-import torch  # noqa: E402
 
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
 
@@ -65,6 +74,8 @@ from scripts.rsl_rl.modules.on_policy_runner_with_extractor import (  # noqa: E4
 from scripts.rsl_rl.modules.student_inference import StudentPolicy  # noqa: E402
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper  # noqa: E402
 
+from scripts.rsl_rl.modules.student_observations import CONTACT_SLICE, PERCEPTION_INTERVAL  # noqa: E402
+
 RUNNER_CLASSES = {
     "OnPolicyRunnerWithExtractor": OnPolicyRunnerWithExtractor,
     "OnPolicyRunnerMoE": OnPolicyRunnerMoE,
@@ -76,7 +87,9 @@ def render_frame(depth: np.ndarray, gates: np.ndarray | None, scale: int = 5) ->
     """Colourise one 58x87 depth frame and draw the expert gates beneath it."""
     img = np.clip(depth + 0.5, 0.0, 1.0)  # the env stores depth as value/max - 0.5
     img = cv2.applyColorMap((img * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
-    img = cv2.resize(img, (img.shape[1] * scale, img.shape[0] * scale), interpolation=cv2.INTER_NEAREST)
+    img = cv2.resize(
+        img, (img.shape[1] * scale, img.shape[0] * scale), interpolation=cv2.INTER_NEAREST
+    )
     if gates is None:
         return img
 
@@ -94,6 +107,7 @@ def render_frame(depth: np.ndarray, gates: np.ndarray | None, scale: int = 5) ->
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg, agent_cfg):
+    """Record student depth, routing, and robot state for playback and offline rendering."""
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
@@ -107,86 +121,121 @@ def main(env_cfg, agent_cfg):
     env = gym.make(args_cli.task, cfg=env_cfg)
     env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    cfg_dict = agent_cfg.to_dict()
-    runner_class = RUNNER_CLASSES[agent_cfg.runner_class_name]
-    runner = runner_class(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    print(f"[INFO]: Loading student checkpoint from: {args_cli.checkpoint}")
-    runner.load(args_cli.checkpoint, load_optimizer=False)
+    try:
+        cfg_dict = agent_cfg.to_dict()
+        runner_class = RUNNER_CLASSES[agent_cfg.runner_class_name]
+        runner = runner_class(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        print(f"[INFO]: Loading student checkpoint from: {args_cli.checkpoint}")
+        runner.load(args_cli.checkpoint, load_optimizer=False)
 
-    policy = StudentPolicy(runner, cfg_dict, agent_cfg.device, vel_source=args_cli.vel_source)
-    policy.force_expert(args_cli.force_expert)
-    print(f"[INFO]: variant={policy.variant} vel_source={policy.vel_source} forced_expert={args_cli.force_expert}")
+        policy = StudentPolicy(runner, cfg_dict, agent_cfg.device, vel_source=args_cli.vel_source)
+        policy.force_expert(args_cli.force_expert)
+        print(
+            f"[INFO]: variant={policy.variant} vel_source={policy.vel_source} forced_expert={args_cli.force_expert}"
+        )
 
-    parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
-    terrain_names = np.asarray(parkour.env_per_terrain_name).reshape(-1)
+        parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
+        terrain_names = np.asarray(parkour.env_per_terrain_name).reshape(-1)
 
-    robot = env.unwrapped.scene["robot"]
-    height_scanner = env.unwrapped.scene.sensors["height_scanner"]
-    body_names = list(robot.data.body_names)
-    env_origins = env.unwrapped.scene.env_origins.cpu().numpy()
+        robot = env.unwrapped.scene["robot"]
+        height_scanner = env.unwrapped.scene.sensors["height_scanner"]
+        body_names = list(robot.data.body_names)
+        env_origins = env.unwrapped.scene.env_origins.cpu().numpy()
 
-    obs, extras = env.get_observations()
-    obs = obs.to(agent_cfg.device)
-    depth = extras["observations"]["depth_camera"].to(agent_cfg.device)
-
-    writer, rec = None, []
-    log = {k: [] for k in ["gates", "context", "priv_latent", "base_lin_vel", "goal_idx", "contacts", "dones",
-                           "body_pos", "base_quat", "scan_hits"]}
-
-    for step in range(args_cli.steps):
-        is_perception_step = env.unwrapped.common_step_counter % 5 == 0
-        actions = policy.act(obs, depth.clone(), is_perception_step)
-
-        gates = policy.last_gates[0].cpu().numpy() if policy.last_gates is not None else None
-        if not args_cli.no_video:
-            rec.append(render_frame(depth[0].cpu().numpy(), gates))
-
-        log["gates"].append(policy.last_gates.cpu().numpy() if policy.last_gates is not None else np.zeros((env.num_envs, 1)))
-        log["context"].append(policy.last_context.cpu().numpy())
-        log["priv_latent"].append(obs[:, 194:223].cpu().numpy())
-        log["base_lin_vel"].append(obs[:, policy.priv_explicit_slice][:, :3].cpu().numpy())
-        log["goal_idx"].append(parkour.cur_goal_idx.cpu().numpy().copy())
-        log["contacts"].append(obs[:, 49:53].cpu().numpy())
-        # Everything an offline third-person view needs. The simulator already
-        # knows where every link is, so no renderer is involved.
-        log["body_pos"].append((robot.data.body_pos_w - env.unwrapped.scene.env_origins[:, None, :])
-                               .cpu().numpy().astype(np.float32))
-        log["base_quat"].append(robot.data.root_quat_w.cpu().numpy().astype(np.float32))
-        log["scan_hits"].append((height_scanner.data.ray_hits_w - env.unwrapped.scene.env_origins[:, None, :])
-                                .cpu().numpy().astype(np.float32))
-
-        obs, _, dones, extras = env.step(actions)
+        obs, extras = env.get_observations()
         obs = obs.to(agent_cfg.device)
-        dones = dones.to(agent_cfg.device)
         depth = extras["observations"]["depth_camera"].to(agent_cfg.device)
-        policy.reset(dones)
-        log["dones"].append(dones.cpu().numpy())
 
-        if (step + 1) % 100 == 0:
-            print(f"  step {step + 1}/{args_cli.steps}")
+        writer, rec = None, []
+        log = {
+            k: []
+            for k in [
+                "gates",
+                "context",
+                "priv_latent",
+                "base_lin_vel",
+                "goal_idx",
+                "contacts",
+                "dones",
+                "body_pos",
+                "base_quat",
+                "scan_hits",
+            ]
+        }
 
-    if rec:
-        h, w = rec[0].shape[:2]
-        path = os.path.join(out_dir, f"depth_{tag}.mp4")
-        writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), args_cli.fps, (w, h))
-        for frame in rec:
-            writer.write(frame)
-        writer.release()
-        print(f"[INFO]: wrote {path}  ({len(rec)} frames, {w}x{h})")
+        for step in range(args_cli.steps):
+            is_perception_step = env.unwrapped.common_step_counter % PERCEPTION_INTERVAL == 0
+            actions = policy.act(obs, depth.clone(), is_perception_step)
 
-    arch = os.path.join(out_dir, f"rollout_{tag}.npz")
-    np.savez_compressed(
-        arch,
-        terrain_names=terrain_names,
-        body_names=np.asarray(body_names),
-        env_origins=env_origins,
-        **{k: np.asarray(v) for k, v in log.items()},
-    )
-    print(f"[INFO]: wrote {arch}")
+            gates = policy.last_gates[0].cpu().numpy() if policy.last_gates is not None else None
+            if not args_cli.no_video:
+                rec.append(render_frame(depth[0].cpu().numpy(), gates))
 
-    env.close()
+            log["gates"].append(
+                policy.last_gates.cpu().numpy()
+                if policy.last_gates is not None
+                else np.zeros((env.num_envs, 1))
+            )
+            log["context"].append(policy.last_context.cpu().numpy())
+            log["priv_latent"].append(obs[:, 194:223].cpu().numpy())
+            log["base_lin_vel"].append(obs[:, policy.priv_explicit_slice][:, :3].cpu().numpy())
+            log["goal_idx"].append(parkour.cur_goal_idx.cpu().numpy().copy())
+            log["contacts"].append(obs[:, CONTACT_SLICE].cpu().numpy())
+            # Everything an offline third-person view needs. The simulator already
+            # knows where every link is, so no renderer is involved.
+            log["body_pos"].append(
+                (robot.data.body_pos_w - env.unwrapped.scene.env_origins[:, None, :])
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
+            log["base_quat"].append(robot.data.root_quat_w.cpu().numpy().astype(np.float32))
+            log["scan_hits"].append(
+                (height_scanner.data.ray_hits_w - env.unwrapped.scene.env_origins[:, None, :])
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
+
+            obs, _, dones, extras = env.step(actions)
+            obs = obs.to(agent_cfg.device)
+            dones = dones.to(agent_cfg.device)
+            depth = extras["observations"]["depth_camera"].to(agent_cfg.device)
+            policy.reset(dones)
+            log["dones"].append(dones.cpu().numpy())
+
+            if (step + 1) % 100 == 0:
+                print(f"  step {step + 1}/{args_cli.steps}")
+
+        if rec:
+            h, w = rec[0].shape[:2]
+            path = os.path.join(out_dir, f"depth_{tag}.mp4")
+            writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), args_cli.fps, (w, h))
+            if not writer.isOpened():
+                raise RuntimeError(f"Cannot open video output {path}; check codec availability")
+            try:
+                for frame in rec:
+                    writer.write(frame)
+            finally:
+                writer.release()
+            print(f"[INFO]: wrote {path}  ({len(rec)} frames, {w}x{h})")
+
+        arch = os.path.join(out_dir, f"rollout_{tag}.npz")
+        np.savez_compressed(
+            arch,
+            terrain_names=terrain_names,
+            body_names=np.asarray(body_names),
+            env_origins=env_origins,
+            **{k: np.asarray(v) for k, v in log.items()},
+        )
+        print(f"[INFO]: wrote {arch}")
+
+    finally:
+        env.close()
 
 
 if __name__ == "__main__":
-    main()
-    simulation_app.close()
+    try:
+        main()
+    finally:
+        simulation_app.close()

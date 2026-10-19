@@ -15,14 +15,15 @@
 # Both arms get the identical budget. The control is the whole point: without it
 # "you gave one arm an extra training stage" answers the comparison by itself.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 source scripts/launch_env.sh
+mkdir -p logs/run_console
 LOG=logs/rl.log
 ITERS=20000
 log(){ echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 
-MOE=$(ls -1t logs/rsl_rl/unitree_go2_parkour_moe_dense/*/model_14999.pt 2>/dev/null | head -1)
-BASE=$(ls -1t logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt 2>/dev/null | head -1)
+MOE=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_moe_dense/*/model_14999.pt" newest)
+BASE=$(select_checkpoint "logs/rsl_rl/unitree_go2_parkour_baseline/*/model_14999.pt" newest)
 [ -f "$MOE" ] || { log "FATAL: no dense checkpoint"; exit 1; }
 [ -f "$BASE" ] || { log "FATAL: no baseline checkpoint"; exit 1; }
 log "=== RL stage, $ITERS iterations per arm ==="
