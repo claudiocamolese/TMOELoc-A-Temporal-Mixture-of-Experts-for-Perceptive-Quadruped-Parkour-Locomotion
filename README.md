@@ -16,7 +16,7 @@ These are offline third-person reconstructions from recorded robot link poses an
 | :---: | :---: |
 | [![Go2 parkour rollout, environment 1](docs/assets/rollout-env1.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env1.mp4) | [![Go2 parkour rollout, environment 2](docs/assets/rollout-env2.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env2.mp4) |
 | **Environment 3** | **Environment 4** |
-| [![Go2 parkour rollout, environment 3](docs/assets/rollout-env3.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env3.mp4) | [![Go2 parkour rollout, environment 4](docs/assets/rollout-env4.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env4.mp4) |
+| [![Go2 parkour rollout, environment 3](docs/assets/rollout-env3.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env6.mp4) | [![Go2 parkour rollout, environment 4](docs/assets/rollout-env4.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env4.mp4) |
 
 
 ## Architecture
