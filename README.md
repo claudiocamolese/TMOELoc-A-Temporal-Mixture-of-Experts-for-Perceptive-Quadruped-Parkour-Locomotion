@@ -6,13 +6,11 @@
 
 ExpertParkour extends [Sangbaek Park's Isaaclab_Parkour](https://github.com/CAI23sbP/Isaaclab_Parkour), an Isaac Lab implementation based on [Extreme Parkour with Legged Robots](https://extreme-parkour.github.io/). We replace the student's separate visual and proprioceptive temporal encoders with one causal Transformer, and replace its dense actor with a routed mixture of four expert MLPs. This repository includes training, released weights, recorded rollouts, and tools to inspect attention, routing, dynamics representations, and failures.
 
-**Experimental status.** The student traverses simulated parkour courses, but the reported Transformer + top-2 MoE does **not** outperform the GRU baseline at the same training budget. PPO refinement was tested and degraded performance with the inherited reward. Both outcomes are documented below.
-
 [Videos](#policy-in-action) · [Architecture](#architecture) · [Results](#measured-results) · [Reproduce](#reproduce-the-results) · [PPO refinement](#rl-after-distillation) · [Acknowledgements](#acknowledgements)
 
 ## Policy in action
 
-The **distilled top-2 student at iteration 14,999**, from run `2026-08-12_12-16-19_moe_transformer`. The looping GIFs below show each complete 12-second clip directly in the README. Click a GIF to open the original MP4. These are offline third-person reconstructions from recorded robot link poses and terrain samples, with routing diagnostics, rather than RTX camera recordings.
+These are offline third-person reconstructions from recorded robot link poses and terrain samples, with routing diagnostics, rather than RTX camera recordings.
 
 | Environment 1 | Environment 2 |
 | :---: | :---: |
@@ -20,9 +18,6 @@ The **distilled top-2 student at iteration 14,999**, from run `2026-08-12_12-16-
 | **Environment 3** | **Environment 4** |
 | [![Go2 parkour rollout, environment 3](docs/assets/rollout-env3.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env3.mp4) | [![Go2 parkour rollout, environment 4](docs/assets/rollout-env4.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env4.mp4) |
 
-[![Go2 parkour rollout, environment 6](docs/assets/rollout-env6.gif)](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/thirdperson_env6.mp4)
-
-**Environment 6** · [All recordings and rollout archive](logs/rsl_rl/unitree_go2_parkour_moe/2026-08-12_12-16-19_moe_transformer/playback_it14999/)
 
 ## Architecture
 
